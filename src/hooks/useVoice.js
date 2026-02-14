@@ -11,11 +11,13 @@ export function useVoice() {
     return localStorage.getItem('trial_auto_narrate') !== 'false';
   });
   const recognitionRef = useRef(null);
-  const synthRef = useRef(window.speechSynthesis);
+  const synthRef = useRef(window.speechSynthesis || null);
   const voiceRef = useRef(null);
 
   // Pick a good voice on init
   useEffect(() => {
+    if (!synthRef.current) return;
+
     const pickVoice = () => {
       const voices = synthRef.current.getVoices();
       // Prefer a deep English male voice for noir feel
@@ -57,7 +59,7 @@ export function useVoice() {
     }
 
     // Stop any ongoing speech first
-    synthRef.current.cancel();
+    if (synthRef.current) synthRef.current.cancel();
 
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
@@ -104,6 +106,7 @@ export function useVoice() {
 
   // Speech Synthesis (output)
   const speak = useCallback((text) => {
+    if (!synthRef.current) return;
     if (!voiceEnabled && !autoNarrate) return;
 
     synthRef.current.cancel();
@@ -152,7 +155,7 @@ export function useVoice() {
   }, [voiceEnabled, autoNarrate]);
 
   const stopSpeaking = useCallback(() => {
-    synthRef.current.cancel();
+    if (synthRef.current) synthRef.current.cancel();
     setIsSpeaking(false);
   }, []);
 
