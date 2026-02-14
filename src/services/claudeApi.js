@@ -29,7 +29,7 @@ export async function sendMessage(apiKey, conversationHistory, userMessage) {
     if (response.status === 401) {
       throw new Error('Invalid API key. Please check your key and try again.');
     }
-    if (response.status === 400 && err.error?.message?.toLowerCase().includes('credit')) {
+    if (response.status === 402) {
       throw new Error('Your API credit balance is too low. Add credits at console.anthropic.com/settings/billing');
     }
     if (response.status === 429) {
