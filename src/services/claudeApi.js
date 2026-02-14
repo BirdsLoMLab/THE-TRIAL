@@ -34,7 +34,7 @@ export async function sendMessage(apiKey, conversationHistory, userMessage) {
     if (response.status === 429) {
       throw new Error('Rate limited. Please wait a moment and try again.');
     }
-    throw new Error(apiMsg || `API error: ${response.status}`);
+    throw new Error(`[${response.status}] ${apiMsg || JSON.stringify(err) || 'Unknown error'}`);
   }
 
   const data = await response.json();
