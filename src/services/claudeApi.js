@@ -26,16 +26,15 @@ export async function sendMessage(apiKey, conversationHistory, userMessage) {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
+    const apiMsg = err.error?.message || '';
+    console.error(`API error ${response.status}:`, JSON.stringify(err));
     if (response.status === 401) {
       throw new Error('Invalid API key. Please check your key and try again.');
-    }
-    if (response.status === 402) {
-      throw new Error('Your API credit balance is too low. Add credits at console.anthropic.com/settings/billing');
     }
     if (response.status === 429) {
       throw new Error('Rate limited. Please wait a moment and try again.');
     }
-    throw new Error(err.error?.message || `API error: ${response.status}`);
+    throw new Error(apiMsg || `API error: ${response.status}`);
   }
 
   const data = await response.json();
