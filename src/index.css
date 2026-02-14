@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+@theme {
+  --color-charcoal-900: #0d0d0d;
+  --color-charcoal-800: #1a1a1a;
+  --color-charcoal-700: #2a2a2a;
+  --color-charcoal-600: #3a3a3a;
+  --color-gold: #c9a227;
+  --color-gold-dim: #a88620;
+  --color-cream: #f5f0e6;
+  --color-cream-dim: #d4cfc5;
+  --color-blood: #8b1a1a;
+  --color-verdict-green: #2a6b3a;
+  --font-playfair: "Playfair Display", serif;
+  --font-crimson: "Crimson Text", serif;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--color-charcoal-900);
+    color: var(--color-cream);
+    font-family: var(--font-crimson);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-charcoal-800);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-charcoal-600);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-gold-dim);
+  }
+}
+
+/* Comic panel styles */
+.comic-panel {
+  border: 3px solid var(--color-cream);
+  background: var(--color-charcoal-800);
+  position: relative;
+  overflow: hidden;
+}
+
+.comic-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(201, 162, 39, 0.03) 1px, transparent 1px);
+  background-size: 4px 4px;
+  pointer-events: none;
+}
+
+.halftone-overlay {
+  background: radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
+
+/* Speech bubble */
+.speech-bubble {
+  position: relative;
+  background: var(--color-cream);
+  color: var(--color-charcoal-900);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-family: var(--font-crimson);
+  font-weight: 600;
+  border: 2px solid var(--color-charcoal-900);
+}
+
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -12px;
+  left: 20px;
+  border-width: 12px 8px 0;
+  border-style: solid;
+  border-color: var(--color-cream) transparent transparent;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201, 162, 39, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(201, 162, 39, 0); }
+}
+
+@keyframes gavel-strike {
+  0% { transform: rotate(0deg); }
+  30% { transform: rotate(-30deg); }
+  60% { transform: rotate(5deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 26, 26, 0.6); }
+  50% { box-shadow: 0 0 0 12px rgba(139, 26, 26, 0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-pulse-gold {
+  animation: pulse-gold 2s infinite;
+}
+
+.animate-gavel {
+  animation: gavel-strike 0.5s ease-out;
+}
+
+.animate-mic-pulse {
+  animation: mic-pulse 1.5s infinite;
+}
+
+.voice-active {
+  background: var(--color-blood) !important;
+  animation: mic-pulse 1.5s infinite;
+}

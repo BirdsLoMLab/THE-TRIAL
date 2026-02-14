@@ -1,98 +1,103 @@
 # THE TRIAL - Implementation Plan
 
 ## What We're Building
-A noir courtroom simulation game where the player is a judge. Claude AI generates unique cases and acts as Game Master. The player questions witnesses, examines evidence, and delivers a verdict. Packaged as an Android APK.
+A noir courtroom simulation game where the player is a judge. Claude AI generates unique cases and acts as Game Master. The player questions witnesses, examines evidence, and delivers a verdict. Features comic book style visuals, live voice input/output, and packages as an Android APK.
 
 ---
 
-## Phase 1: Project Setup
-- Initialize React + Vite project
-- Install and configure Tailwind CSS
-- Set up Google Fonts (Playfair Display for headers, Crimson Text for body)
-- Establish the noir color palette: charcoal (#0d0d0d, #1a1a1a), muted gold (#c9a227), cream (#f5f0e6)
-- Create the file structure from the spec
+## Phase 1: Project Setup [DONE]
+- React + Vite + Tailwind CSS v4
+- Google Fonts (Playfair Display, Crimson Text)
+- Noir color palette: charcoal (#0d0d0d, #1a1a1a), muted gold (#c9a227), cream (#f5f0e6)
 
-## Phase 2: Landing Page
-- Full-screen noir landing page with dramatic title "THE TRIAL"
-- "Enter the Courtroom" button
-- "How to Play" button that opens a Rules modal
-- API key input (stored in localStorage) — required before starting a game
-- Atmospheric styling: dark background, gold accents, serif typography
+## Phase 2: Landing Page [DONE]
+- Dramatic title "THE TRIAL" with noir atmosphere
+- "Enter the Courtroom" + "How to Play" buttons
+- API key input with step-by-step instructions for getting a Claude key
+- Key stored in localStorage, never sent anywhere except Anthropic's API
 
-## Phase 3: Rules Modal
-- Explain the gameplay: you're the judge, one action per turn, verdict unlocks at Turn 4
-- Explain scoring categories (Timing, Evidence, Deception, Cognitive)
-- Explain score labels (Elite Judge through Dangerous Judge)
-- Styled to match the noir theme
+## Phase 3: Rules Modal [DONE]
+- Gameplay explanation, scoring categories, score labels
+- Voice controls documentation
 
-## Phase 4: Game Interface
-- **Chat Panel** (left/main area): Scrollable area showing AI narration and player choices
-  - AI messages styled as narration
-  - Numbered action options the player can tap/click to select
-  - Player's chosen actions shown as their messages
-- **Status Panel** (right side on desktop, collapsible on mobile):
-  - Turn counter (pulses at Turn 4 when verdict unlocks)
-  - Evidence tracker (list of evidence examined so far)
-  - Verdict buttons: "Guilty" and "Not Guilty" (locked/grayed until Turn 4)
-- Mobile-responsive: status panel moves to top/bottom on small screens
+## Phase 4: Game Interface [DONE]
+- **Comic Panel** (top): SVG courtroom scene that updates based on AI scene data
+  - Dynamic characters: Judge, Witness, Prosecution, Defense, Jury
+  - Mood-reactive colors and speed lines for dramatic moments
+  - Evidence examination visuals with magnifying glass animation
+  - Location labels, speech indicators, halftone overlay
+- **Chat Panel** (main): AI narration with clickable numbered action options
+- **Status Panel** (right sidebar, collapsible on mobile):
+  - Turn counter with gold pulse at Turn 4
+  - Evidence tracker
+  - Verdict buttons (locked until Turn 4)
+  - Voice toggle controls
 
-## Phase 5: Claude API Integration
-- Service module that calls the Anthropic Claude API
-- Sends the system prompt (Game Master instructions) + conversation history
-- Parses `[Turn X]` from responses to update turn counter
-- Extracts evidence mentions to populate the tracker
-- One API call per player action
-- API key read from localStorage (entered on landing page)
+## Phase 5: Claude API Integration [DONE]
+- Direct browser-to-API calls (no backend)
+- System prompt with [SCENE] block parsing for visual updates
+- [VERDICT_RESULT] block parsing for structured scoring
+- Turn number extraction, option parsing
 
-## Phase 6: Game State Management
-- Custom `useGameState` hook managing:
-  - Conversation history (messages array)
-  - Current turn number
-  - Evidence examined
-  - Game phase (landing, playing, verdict, results)
-  - Verdict lock status (unlocks at Turn 4)
-  - Loading state during API calls
+## Phase 6: Game State Management [DONE]
+- `useGameState` hook: conversation, turns, evidence, phases, verdict flow
+- `useVoice` hook: speech recognition, synthesis, auto-narrate
 
-## Phase 7: Verdict Flow
-- Verdict confirmation modal: "Are you sure?" with dramatic styling
-- If before Turn 4: send verdict to AI, get automatic failure response
-- If Turn 4+: send verdict to AI, get full case reveal + score breakdown
-- Parse score from AI response
+## Phase 7: Voice System [DONE]
+- **Input**: Web Speech API SpeechRecognition (Chrome/Chromium)
+  - Tap mic button, speak action, auto-submits on speech end
+  - Visual pulse animation while listening
+- **Output**: Web Speech API SpeechSynthesis
+  - Auto-narrates AI responses aloud
+  - Deep/slow voice for noir feel (rate 0.9, pitch 0.8)
+  - Chunks long text for reliable playback
+  - Toggle on/off in status panel
 
-## Phase 8: Results Page
-- Display: Correct/Incorrect verdict
-- Full truth explanation from the AI
-- Score breakdown by category (Timing, Evidence, Deception, Cognitive)
-- Total score + label (Elite Judge, etc.)
-- "Play Again" button to return to landing page
+## Phase 8: Verdict Flow [DONE]
+- Confirmation modal with gavel animation
+- Warning for early verdicts (before Turn 4)
+- AI reveals truth + calculates score
 
-## Phase 9: Polish
-- Smooth transitions/animations between screens
-- Loading states during API calls (typing indicator)
-- Turn counter pulse animation at Turn 4
-- Gavel animation or effect on verdict delivery
-- Mobile responsiveness testing
-- Error handling for API failures
+## Phase 9: Results Page [DONE]
+- Correct/Incorrect verdict display
+- Animated score bars (Timing, Evidence, Deception, Cognitive)
+- Full truth explanation from AI
+- "Try Another Case" button
 
-## Phase 10: Android APK via Capacitor
-- Install Capacitor (`@capacitor/core`, `@capacitor/cli`, `@capacitor/android`)
-- Initialize Capacitor config
-- Add Android platform
-- Build the web app (`npm run build`)
-- Copy web assets to Android project (`npx cap copy`)
-- Configure Android project (app name, icon, splash screen)
-- Build the APK
+## Phase 10: Android APK via Capacitor [TODO]
+- Capacitor setup + Android platform
+- Build APK
 
 ---
 
-## Architecture Summary
-
+## File Structure
 ```
-User taps action → useGameState formats message → claudeApi sends to Claude
-→ Response parsed (turn #, evidence, narration) → State updated → UI re-renders
+src/
+├── components/
+│   ├── LandingPage.jsx      # Title screen + API key input
+│   ├── GameInterface.jsx     # Main game layout
+│   ├── ChatPanel.jsx         # AI narration + action buttons
+│   ├── StatusPanel.jsx       # Turn/evidence/verdict/voice
+│   ├── CourtroomScene.jsx    # Comic book SVG scene
+│   ├── VerdictModal.jsx      # Verdict confirmation
+│   ├── RulesModal.jsx        # How to play
+│   └── ResultsPage.jsx       # Score breakdown
+├── hooks/
+│   ├── useGameState.js       # Core game state
+│   └── useVoice.js           # Speech recognition + synthesis
+├── services/
+│   └── claudeApi.js          # Anthropic API client
+├── prompts/
+│   └── systemPrompt.js       # AI Game Master prompt
+├── App.jsx
+├── main.jsx
+└── index.css                 # Tailwind + custom animations
 ```
 
-## Key Design Decisions
-- **No backend server**: API calls go directly from the client to Anthropic's API (API key stored locally)
-- **All game logic lives in the AI prompt**: Claude handles case generation, narration, scoring — the frontend is a themed chat interface with state tracking
-- **Capacitor for Android**: wraps the web app as-is, no native code needed
+## Architecture
+```
+Player action (tap/voice) → useGameState → claudeApi → Claude API
+→ Parse response ([Turn], [SCENE], options, [VERDICT_RESULT])
+→ Update state → Re-render UI (chat, comic panel, status)
+→ Auto-narrate via SpeechSynthesis
+```
