@@ -24,7 +24,9 @@
     "emulators": "pnpm -C functions build && firebase emulators:start --only auth,firestore,functions --project demo-fathoms",
     "content:check": "node scripts/check-content.ts",
     "android:sync": "pnpm build && cap sync android",
-    "android:debug": "node scripts/android-debug.ts"
+    "android:debug": "node scripts/android-debug.ts",
+    "android:release": "node scripts/android-release.ts",
+    "version:bump": "node scripts/bump-version.ts"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^10.0.0",

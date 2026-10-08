@@ -4,13 +4,14 @@ Private two-player conversation game for two Android phones. React web app wrapp
 
 ## Status
 
-Phases 0 to 4 are built and verified.
+Phases 0 to 5 are built and verified. Phase 6 (Live mode) is not started: PLAN.md keeps it optional until Turns mode has been used for a while.
 
 - Phase 1: `src/game` holds the deck builder and the turn reducer (pure, 100 percent line coverage enforced by `pnpm test`, a property test for the strict alternation of the ball) and Same Device mode plays a whole deck on one phone with the room in localStorage.
 - Phase 2: online rooms on Firestore. Anonymous sign in, create and join by invite link or code, the Turn, Waiting, Journal, and Settings screens wired through one transaction per action, a presence dot, and drafts kept per room and card on the device. Security rules live in `firestore.rules` with emulator tests for every negative case the plan names, and a Playwright spec plays ten cards between two browser contexts against the emulators.
 - Phase 3: push and reminders. The Android app registers with FCM and stores its token on the player; `functions/` holds `onBallPass` (turn alert and nudge) and `reminderSweep` (hourly, with quiet hours and a cap), tested with fake timers and against the Firestore emulator; the phone schedules local backup reminders at 10, 20, and 30 hours; Settings has reminder hours, the cap, quiet hours, a notification switch, and the Samsung battery guide.
 - Phase 4: follow the thread and the journal. Reactions and favorites at any time, journal filters (favorites, level, Currents, pack), text search, grouping by day, and a Markdown export. After Dark is switched on per player behind an adult confirmation; turning it off passes an open After Dark card for free and prunes the deck; the retention setting hides each After Dark entry once both have read it (a tombstone keeps the card number, the content is gone). Topics a player ticks are excluded for the room. Custom cards, After Dark ones included, join the next deck under the Custom pack. An app lock (PIN, fingerprint or face when the phone has it) blocks the Turn and Journal screens on start and after 30 seconds in the background. Delete Room needs both players to ask, then either can delete it.
-- Still yours to do: create the Firebase project and drop its config in (see Firebase below), deploy the functions once the project is on Blaze (see Functions below), and install the debug APK on both phones (see Android debug build).
+- Phase 5: the release process. `RELEASE.md` covers the signing key (created once, kept outside the repo, backed up twice), `pnpm version:bump`, `pnpm android:release` (signed APK in `release/`), the install and update procedure for both phones, and crash reporting (not set up). The Gradle release build signs from `android/keystore.properties` or the `FATHOMS_KEYSTORE_*` variables.
+- Still yours to do: create the Firebase project and drop its config in (see Firebase below), deploy the functions once the project is on Blaze (see Functions below), create the signing key (see RELEASE.md), and install the APK on both phones (see Android debug build).
 
 Dependency versions were checked against the npm registry on 2026-10-08. Re-check before upgrading.
 
@@ -49,8 +50,6 @@ pnpm dev                     # http://localhost:5173
 | `pnpm content:check` | Validate `content/` and print counts per pack and level                                |
 | `pnpm android:sync`  | Build the web app and copy it into `android/`                                          |
 | `pnpm android:debug` | `android:sync`, assemble a debug APK with the Gradle wrapper, install it over USB      |
-
-Phase 5 adds `pnpm android:release`.
 
 ## Content
 
@@ -108,7 +107,7 @@ pnpm android:debug
 
 That runs `pnpm android:sync`, then `gradlew assembleDebug` inside `android/` (it picks `gradlew.bat` on Windows), then `adb install -r` of the APK. The APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`. The phone connected over USB needs Developer options and USB debugging on. For the second phone, share that APK file and allow installs from the chosen source once when Android asks.
 
-Phase 5 covers signed release builds and the keystore. Keystore files (`*.jks`, `*.keystore`) are ignored by git.
+`RELEASE.md` covers signed release builds and the keystore. Keystore files (`*.jks`, `*.keystore`) and `android/keystore.properties` are ignored by git.
 
 Without Android Studio, the command line tools alone work too. Download `commandlinetools-linux-<build>_latest.zip` from the Android developer site, unzip it so that `sdkmanager` sits at `<SDK>/cmdline-tools/latest/bin/sdkmanager`, then:
 

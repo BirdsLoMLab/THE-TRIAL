@@ -15,6 +15,8 @@ playwright-report
 # Firebase Android config is per project and stays out of the repo (PLAN section 10).
 android/app/google-services.json
 
-# Signing keystores live outside the repo (PLAN section 10).
+# Signing keystores and their passwords live outside the repo (PLAN section 10).
 *.jks
 *.keystore
+android/keystore.properties
+release/

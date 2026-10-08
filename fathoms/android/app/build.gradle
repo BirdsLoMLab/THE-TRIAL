@@ -16,10 +16,34 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Release signing (Phase 5). The keystore and its passwords live outside the
+    // repo, in android/keystore.properties (ignored by git) or in the environment:
+    // FATHOMS_KEYSTORE_PATH, FATHOMS_KEYSTORE_PASSWORD, FATHOMS_KEY_ALIAS, FATHOMS_KEY_PASSWORD.
+    // See RELEASE.md. Without them, assembleRelease builds an unsigned APK.
+    def keystoreProps = new Properties()
+    def keystorePropsFile = rootProject.file('keystore.properties')
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.withInputStream { keystoreProps.load(it) }
+    }
+    def storeFilePath = keystoreProps['storeFile'] ?: System.getenv('FATHOMS_KEYSTORE_PATH')
+    def hasSigning = storeFilePath != null && file(storeFilePath).exists()
+    signingConfigs {
+        if (hasSigning) {
+            release {
+                storeFile file(storeFilePath)
+                storePassword keystoreProps['storePassword'] ?: System.getenv('FATHOMS_KEYSTORE_PASSWORD')
+                keyAlias keystoreProps['keyAlias'] ?: System.getenv('FATHOMS_KEY_ALIAS')
+                keyPassword keystoreProps['keyPassword'] ?: System.getenv('FATHOMS_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
