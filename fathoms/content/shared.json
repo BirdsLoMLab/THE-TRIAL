@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "appName": "Fathoms",
+  "levels": [
+    { "id": 1, "name": "Shallows", "blurb": "Specific, light, easy to answer. Builds momentum.", "color": "#4FB3D9" },
+    { "id": 2, "name": "Open Water", "blurb": "Honest admissions, patterns, things you do not usually say.", "color": "#1F5F8B" },
+    { "id": 3, "name": "The Deep", "blurb": "Formative, vulnerable, the things that shaped you.", "color": "#0B1A2E" }
+  ],
+  "currentColor": "#E0A030",
+  "afterDarkColor": "#8B1E3F",
+  "rules": [
+    "Honest or pass. Never fake an answer.",
+    "Follow the thread. When something lands, ask one more question before moving on."
+  ],
+  "packs": [
+    { "id": "core", "name": "Core", "blurb": "Works with anyone: friends, siblings, strangers, each other.", "file": "packs/core.json" },
+    { "id": "partner", "name": "Partner", "blurb": "For the two of you. Written for distance.", "file": "packs/partner.json" },
+    { "id": "afterdark", "name": "After Dark", "blurb": "Explicit. Adults only. Both of you have to switch it on.", "file": "packs/afterdark.json", "adult": true }
+  ],
+  "defaults": {
+    "mode": "turns",
+    "startLevel": 1,
+    "progression": "linear",
+    "currentEvery": 5,
+    "noCurrentsBefore": 3,
+    "passesPerDeck": 3,
+    "passedCardCooldownDays": 30,
+    "excludeAnswered": true,
+    "closerSeesOpener": false,
+    "reminderHours": 10,
+    "reminderCap": null,
+    "quietHours": null,
+    "lighterWindowCards": 5,
+    "afterDarkRetention": "keep",
+    "maxPlayers": 2
+  },
+  "notifications": {
+    "turnTitle": "Your turn",
+    "turnBody": "{partner} answered: {card}",
+    "turnBodyAdult": "{partner} answered an After Dark card",
+    "reminderTitle": "Still your turn",
+    "reminderBody": "{partner} has been waiting {hours} hours",
+    "nudgeBody": "{partner} nudged you"
+  },
+  "reactions": ["❤️", "😂", "😮", "🥺"],
+  "openers": [
+    { "id": "open-01", "text": "Before we start: how are you actually doing, on a scale from fine to the truth?" },
+    { "id": "open-02", "text": "What is one thing from today that you want to leave outside the door before we begin?" },
+    { "id": "open-03", "text": "What do you want tonight to feel like when we hang up?" }
+  ],
+  "closers": [
+    { "id": "close-01", "text": "One thing you learned about me tonight. One thing you learned about yourself." },
+    { "id": "close-02", "text": "Which answer tonight do you want me to remember?" },
+    { "id": "close-03", "text": "What do you want to carry from this into tomorrow?" }
+  ],
+  "followUps": [
+    { "id": "fu-01", "text": "What made you remember that one?" },
+    { "id": "fu-02", "text": "What did you leave out?" },
+    { "id": "fu-03", "text": "How old were you?" },
+    { "id": "fu-04", "text": "Who else knows that?" },
+    { "id": "fu-05", "text": "What did it change?" },
+    { "id": "fu-06", "text": "Say the part you were about to skip." },
+    { "id": "fu-07", "text": "What would you tell someone else in that situation?" },
+    { "id": "fu-08", "text": "Is that still true today?" },
+    { "id": "fu-09", "text": "What is the feeling underneath that?" },
+    { "id": "fu-10", "text": "What happened the next day?" },
+    { "id": "fu-11", "text": "What do you want me to do with that?" },
+    { "id": "fu-12", "text": "When did you decide that?" },
+    { "id": "fu-13", "text": "What is the version of that you tell other people?" },
+    { "id": "fu-14", "text": "What would make that easier to say?" },
+    { "id": "fu-15", "text": "Why now?" },
+    { "id": "fu-16", "text": "What did you want me to say back?" }
+  ],
+  "daily": [
+    { "id": "d-01", "text": "One thing that made today lighter." },
+    { "id": "d-02", "text": "The best thing you saw today." },
+    { "id": "d-03", "text": "A thought you had about me today, unedited." },
+    { "id": "d-04", "text": "Something you wanted to say today and did not." },
+    { "id": "d-05", "text": "What you are looking forward to tomorrow." },
+    { "id": "d-06", "text": "One thing you would have done differently today." },
+    { "id": "d-07", "text": "Something you ate that you want to tell me about." },
+    { "id": "d-08", "text": "A song for today, and why that one." },
+    { "id": "d-09", "text": "One word for today, then the reason." },
+    { "id": "d-10", "text": "A tiny win from today." },
+    { "id": "d-11", "text": "Something that annoyed you today that I would find funny." },
+    { "id": "d-12", "text": "Someone you talked to today that you want me to know about." },
+    { "id": "d-13", "text": "What you would want from me if I were there right now." },
+    { "id": "d-14", "text": "A photo from today and the story behind it." },
+    { "id": "d-15", "text": "Something you are worried about tonight." },
+    { "id": "d-16", "text": "What you did today that your younger self would be proud of." },
+    { "id": "d-17", "text": "The nicest thing anyone did for you today." },
+    { "id": "d-18", "text": "Something you learned today." },
+    { "id": "d-19", "text": "Where your mind went when it wandered today." },
+    { "id": "d-20", "text": "Something you are grateful for about us today." },
+    { "id": "d-21", "text": "The moment today you most wished I could see." },
+    { "id": "d-22", "text": "What tired you out today, and was it worth it?" },
+    { "id": "d-23", "text": "A small kindness you did today that nobody noticed." },
+    { "id": "d-24", "text": "Something you noticed about yourself today." },
+    { "id": "d-25", "text": "What you want tomorrow to have more of." },
+    { "id": "d-26", "text": "One sentence you would text me at 3 a.m. if you were sure I was awake." },
+    { "id": "d-27", "text": "What you are proud of this week so far." },
+    { "id": "d-28", "text": "A sound from today." },
+    { "id": "d-29", "text": "What you would change about today if you could replay it." },
+    { "id": "d-30", "text": "The thing you are most looking forward to about the next time we are together." }
+  ]
+}

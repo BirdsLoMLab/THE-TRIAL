@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+coverage
+.vitest
+test-results
+playwright-report
+*.local
+.env.local
+.env.*.local
+*.tsbuildinfo
+*.log
+.DS_Store
+
+# Firebase Android config is per project and stays out of the repo (PLAN section 10).
+android/app/google-services.json

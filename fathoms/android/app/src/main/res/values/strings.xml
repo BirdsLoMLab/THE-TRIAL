@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Fathoms</string>
+    <string name="title_activity_main">Fathoms</string>
+    <string name="package_name">com.fathoms.app</string>
+    <string name="custom_url_scheme">com.fathoms.app</string>
+</resources>

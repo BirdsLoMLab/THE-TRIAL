@@ -1,0 +1,11 @@
+# Card content is kept exactly as written, one card per line.
+content/
+android/
+dist/
+coverage/
+.vitest/
+test-results/
+playwright-report/
+pnpm-lock.yaml
+PLAN.md
+CLAUDE.md
