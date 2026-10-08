@@ -4,39 +4,43 @@ Private two-player conversation game for two Android phones. React web app wrapp
 
 ## Status
 
-Phase 0 (scaffold) is done. The app builds, the Android project is generated, and the placeholder Home screen shows the app name and card counts per pack and level. Game logic and screens arrive in Phase 1.
+Phase 0 (scaffold) is built and verified: the web app builds, the Android project is generated and committed, and the placeholder Home screen shows the app name and card counts per pack and level. Two Phase 0 steps need your accounts and phones and are still open: create the Firebase project and drop its config files in (see Firebase below), and build the debug APK and install it on both phones (see Android debug build). Game logic and screens arrive in Phase 1.
 
 Dependency versions were checked against the npm registry on 2026-10-08. Re-check before upgrading.
 
 ## Requirements
 
-- Node 22.22 or newer (React Router 8 requires it) and pnpm 10 (`corepack enable` gives you pnpm).
-- For the Android build: Android Studio 2025.2.1 or newer with SDK Platform 36 installed (Capacitor 8). The Gradle wrapper (8.14.3) and the Android Gradle Plugin (8.13.0) download themselves on first build. A JDK 17 or newer is required; Android Studio bundles one.
-- `adb` on your PATH to install over USB (part of Android SDK Platform-Tools).
+- Node 22.22 or newer (React Router 8 requires it) and pnpm 10. Install pnpm with `npm install -g pnpm@10`, or run `corepack enable` on a Node release that still ships corepack.
+- For the Android build: Android Studio 2025.2.1 or newer with SDK Platform 36 installed (Capacitor 8). The Gradle wrapper (8.14.3) and the Android Gradle Plugin (8.13.0) download themselves on first build.
+- JDK 21 or newer. Capacitor 8 compiles Java 21, so JDK 17 fails with an invalid source release error. Android Studio bundles a JetBrains Runtime 21 under its `jbr` folder; command line builds need `JAVA_HOME` pointed at that folder or at another JDK 21.
+- `adb` on your PATH to install over USB. It lives in `platform-tools` inside the Android SDK.
 
 ## Setup
 
 ```bash
 cd fathoms
 pnpm install
-cp .env.example .env.local   # fill in once the Firebase project exists (Phase 2)
+cp .env.example .env.local   # fill in once the Firebase project exists
 pnpm dev                     # http://localhost:5173
 ```
 
 ## Commands
 
-| Command              | What it does                                                             |
-| -------------------- | ------------------------------------------------------------------------ |
-| `pnpm dev`           | Dev server in the browser                                                |
-| `pnpm build`         | Type check, validate content, build to `dist/`. Fails on invalid content |
-| `pnpm test`          | Unit and component tests (Vitest)                                        |
-| `pnpm test:coverage` | Same, with a coverage report in `coverage/`                              |
-| `pnpm test:e2e`      | Playwright smoke test at 360 px against the dev server                   |
-| `pnpm lint`          | ESLint, Prettier check, and the em dash check                            |
-| `pnpm format`        | Prettier write                                                           |
-| `pnpm content:check` | Validate `content/` and print counts per pack and level                  |
-| `pnpm android:sync`  | Build the web app and copy it into `android/`                            |
-| `pnpm android:debug` | `android:sync`, assemble a debug APK, install it over USB                |
+| Command              | What it does                                                                      |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `pnpm dev`           | Dev server in the browser                                                         |
+| `pnpm build`         | Type check, validate content, build to `dist/`. Fails on invalid content          |
+| `pnpm preview`       | Serve the production build locally                                                |
+| `pnpm typecheck`     | TypeScript only                                                                   |
+| `pnpm test`          | Unit and component tests (Vitest)                                                 |
+| `pnpm test:watch`    | Same, in watch mode                                                               |
+| `pnpm test:coverage` | Same, with a coverage report in `coverage/`                                       |
+| `pnpm test:e2e`      | Playwright smoke test at 360 px against the dev server                            |
+| `pnpm lint`          | ESLint, Prettier check, and the em dash check                                     |
+| `pnpm format`        | Prettier write                                                                    |
+| `pnpm content:check` | Validate `content/` and print counts per pack and level                           |
+| `pnpm android:sync`  | Build the web app and copy it into `android/`                                     |
+| `pnpm android:debug` | `android:sync`, assemble a debug APK with the Gradle wrapper, install it over USB |
 
 Phase 2 adds `pnpm emulators` and `pnpm test:rules`. Phase 5 adds `pnpm android:release`.
 
@@ -46,7 +50,7 @@ The shape of `content/shared.json` and `content/packs/*.json` is fixed (PLAN sec
 
 Do not edit card wording without asking. Adding a field means changing the schema and `tests/unit/content.test.ts` in the same commit.
 
-## Firebase (needed from Phase 2)
+## Firebase (open Phase 0 step, first used in Phase 2)
 
 Do this once, in the Firebase console, signed in with the Google account that will own the project.
 
@@ -60,26 +64,29 @@ Do this once, in the Firebase console, signed in with the Google account that wi
 
 ## Android debug build
 
-The web app is copied into `android/app/src/main/assets/public` by `cap sync`. The Android project itself is committed.
+The web app is copied into `android/app/src/main/assets/public` by `cap sync`. The Android project itself is committed. The native shell is dark (window background, splash background, and system bar icons) to match the app; the launcher icon is still the Capacitor default until a Fathoms icon is drawn.
 
 With Android Studio:
 
 1. `pnpm android:sync`
-2. Open the `android/` folder in Android Studio and let it sync Gradle.
+2. Open the `android/` folder in Android Studio and let it sync Gradle. This also writes `android/local.properties` with your SDK path.
 3. Connect a phone with USB debugging on, pick it in the device list, and press Run.
 
-From the command line:
+From the command line, once per machine before the first build:
+
+- Make sure Android Studio has opened `android/` once (it writes `android/local.properties`), or create that file yourself with one line, `sdk.dir=<path to your Android SDK>`, or export `ANDROID_HOME` with that path. Default SDK paths: `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux, `%LOCALAPPDATA%\Android\Sdk` on Windows.
+- Export `JAVA_HOME` to a JDK 21, for example Android Studio's `jbr` folder, and check with `java -version`.
+- Add `<SDK>/platform-tools` to your PATH so `adb` resolves.
+
+Then:
 
 ```bash
-pnpm android:sync
-cd android
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+pnpm android:debug
 ```
 
-`pnpm android:debug` runs all of that in one go. The APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`; share that file to install on the second phone and allow installs from that source once when Android asks.
+That runs `pnpm android:sync`, then `gradlew assembleDebug` inside `android/` (it picks `gradlew.bat` on Windows), then `adb install -r` of the APK. The APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`. The phone connected over USB needs Developer options and USB debugging on. For the second phone, share that APK file and allow installs from the chosen source once when Android asks.
 
-Both phones need Developer options and USB debugging on for `adb install`. Phase 5 covers signed release builds and the keystore.
+Phase 5 covers signed release builds and the keystore. Keystore files (`*.jks`, `*.keystore`) are ignored by git.
 
 ## Playwright
 
@@ -92,10 +99,10 @@ fathoms/
   content/            shared.json and packs/*.json, validated by src/content/schema.ts
   src/config/         app name and id
   src/content/        schema, loader
-  src/game/           pure logic, no React, Firebase, or Capacitor (Phase 1)
+  src/game/           pure logic, no React, Firebase, or Capacitor (Phase 1, not created yet)
   src/routes/         one file per screen
   src/sync/           Firebase init (guarded until .env.local exists)
-  scripts/            content check, dash check, Vite content plugin
+  scripts/            content check, dash check, Vite content plugin, Android debug build
   tests/unit/         Vitest
   tests/e2e/          Playwright
   android/            Capacitor Android project (generated, committed)

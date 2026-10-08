@@ -22,7 +22,7 @@ const idString = z
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'expected a 6 digit hex color')
 const timeHHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM')
 
-export const levelIdSchema = z.union([z.literal(1), z.literal(2), z.literal(3)])
+export const levelIdSchema = z.literal([1, 2, 3])
 
 export const cardTextSchema = z
   .string()
@@ -59,35 +59,50 @@ export type QuestionCard = z.infer<typeof questionCardSchema>
 export type CurrentCard = z.infer<typeof currentCardSchema>
 export type Card = z.infer<typeof cardSchema>
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 export const packFileSchema = z
   .strictObject({
     pack: idString,
     adult: z.boolean().default(false),
     cards: z.array(cardSchema).min(1, 'a pack needs at least one card'),
   })
-  .superRefine((pack, ctx) => {
-    for (const level of LEVEL_IDS) {
-      const count = pack.cards.filter((c) => c.type === 'question' && c.level === level).length
-      if (count < MIN_CARDS_PER_LEVEL) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['cards'],
-          message: `pack ${pack.pack} has ${count} level ${level} cards, needs at least ${MIN_CARDS_PER_LEVEL}`,
-        })
+  .superRefine(
+    (pack, ctx) => {
+      // Runs even when a card failed to parse (when: () => true), so a pack with
+      // a type error still reports its duplicate ids and short levels in the
+      // same pass. The guards below keep it safe on partially parsed input.
+      const cards: unknown[] = Array.isArray(pack.cards) ? pack.cards : []
+      const packName = typeof pack.pack === 'string' ? pack.pack : '?'
+      for (const level of LEVEL_IDS) {
+        const count = cards.filter(
+          (c) => isRecord(c) && c.type === 'question' && c.level === level,
+        ).length
+        if (count < MIN_CARDS_PER_LEVEL) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['cards'],
+            message: `pack ${packName} has ${count} level ${level} cards, needs at least ${MIN_CARDS_PER_LEVEL}`,
+          })
+        }
       }
-    }
-    const seen = new Set<string>()
-    pack.cards.forEach((card, index) => {
-      if (seen.has(card.id)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['cards', index, 'id'],
-          message: `duplicate card id ${card.id}`,
-        })
-      }
-      seen.add(card.id)
-    })
-  })
+      const seen = new Set<string>()
+      cards.forEach((card, index) => {
+        if (!isRecord(card) || typeof card.id !== 'string') return
+        if (seen.has(card.id)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['cards', index, 'id'],
+            message: `duplicate card id ${card.id}`,
+          })
+        }
+        seen.add(card.id)
+      })
+    },
+    { when: () => true },
+  )
 
 export type PackFile = z.infer<typeof packFileSchema>
 

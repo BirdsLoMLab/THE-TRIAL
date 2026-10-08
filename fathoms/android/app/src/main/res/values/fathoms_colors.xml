@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the abyss token in src/index.css. A unit test keeps them in sync. -->
+    <color name="fathoms_abyss">#070D16</color>
+</resources>

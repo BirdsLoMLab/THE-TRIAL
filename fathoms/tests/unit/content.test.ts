@@ -140,7 +140,32 @@ describe('content validation rejects', () => {
     const cards = raw.packs['packs/core.json']!.cards
     cards[0]!.level = null
     cards[1]!.level = 4
-    expectInvalid(raw.shared, raw.packs, 'packs/core.json', 'cards.0', 'cards.1')
+    expectInvalid(
+      raw.shared,
+      raw.packs,
+      'packs/core.json',
+      'cards.0',
+      'cards.1',
+      'expected one of 1|2|3',
+    )
+  })
+
+  it('a type error, a duplicate id, and a short level in one pack, all in one report', () => {
+    const raw = fresh()
+    const pack = raw.packs['packs/core.json']!
+    pack.cards[0]!.level = '1'
+    pack.cards[7]!.id = pack.cards[1]!.id as string
+    let level2 = 0
+    pack.cards = pack.cards.filter(
+      (c) => !(c.type === 'question' && c.level === 2 && ++level2 > 15),
+    )
+    expectInvalid(
+      raw.shared,
+      raw.packs,
+      'cards.0.level',
+      `duplicate card id ${String(pack.cards[1]!.id)}`,
+      `has 15 level 2 cards`,
+    )
   })
 
   it('a Current with a level or without modes', () => {

@@ -21,7 +21,7 @@
     "test:e2e": "playwright test",
     "content:check": "node scripts/check-content.ts",
     "android:sync": "pnpm build && cap sync android",
-    "android:debug": "pnpm android:sync && cd android && ./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk"
+    "android:debug": "node scripts/android-debug.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",

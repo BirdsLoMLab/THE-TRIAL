@@ -34,18 +34,18 @@ export function Home() {
             <h2 className="flex items-center gap-2 text-xl font-medium">
               {pack.name}
               {pack.adult && (
-                <span
-                  className="bg-afterdark rounded-full px-2 py-0.5 text-xs tracking-wide uppercase"
-                  aria-label="adults only, off by default"
-                >
-                  18+
-                </span>
+                <>
+                  <span className="bg-afterdark rounded-full px-2 py-0.5 text-xs tracking-wide uppercase">
+                    18+
+                  </span>
+                  <span className="sr-only">adults only</span>
+                </>
               )}
             </h2>
             <dl className="mt-3 grid grid-cols-4 gap-2 text-center">
               {content.shared.levels.map((level) => (
                 <div key={level.id} className={`rounded-xl px-1 py-2 ${LEVEL_CHIP[level.id]}`}>
-                  <dt className="flex h-8 items-end justify-center text-[11px] leading-tight opacity-90">
+                  <dt className="flex min-h-8 items-end justify-center text-[11px] leading-tight [overflow-wrap:anywhere] opacity-90">
                     {level.name}
                   </dt>
                   <dd
@@ -57,7 +57,7 @@ export function Home() {
                 </div>
               ))}
               <div className="bg-currents text-abyss rounded-xl px-1 py-2">
-                <dt className="flex h-8 items-end justify-center text-[11px] leading-tight opacity-90">
+                <dt className="flex min-h-8 items-end justify-center text-[11px] leading-tight [overflow-wrap:anywhere] opacity-90">
                   Currents
                 </dt>
                 <dd

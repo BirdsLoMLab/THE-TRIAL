@@ -1,5 +1,5 @@
 // Working agreement (PLAN section 12): no em dashes or en dashes anywhere in
-// UI text, docs, comments, or content. Scans the tracked text files.
+// UI text, docs, comments, or content. Scans the text files, dotfiles included.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
@@ -34,7 +34,8 @@ function walk(dir: string, out: string[]): void {
     if (SKIP_DIRS.has(name)) continue
     const path = join(dir, name)
     if (statSync(path).isDirectory()) walk(path, out)
-    else if (EXTENSIONS.has(name.slice(name.lastIndexOf('.')))) out.push(path)
+    else if (name.startsWith('.') || EXTENSIONS.has(name.slice(name.lastIndexOf('.'))))
+      out.push(path)
   }
 }
 
