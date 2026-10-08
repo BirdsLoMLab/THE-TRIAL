@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate, Outlet, useParams } from 'react-router'
 import { Button, LinkButton, Notice, Screen } from '../components/ui'
 import type { PlayerId } from '../game/types'
+import { lookupFor } from '../store/lookup'
 import { inviteUrlFor, partnerIsOnline, readyState, useOnline } from '../store/online'
 import type { RoomDoc } from '../sync/model'
 import { GameContext, type GameAdapter } from './context'
@@ -120,6 +121,10 @@ export function OnlineLayout() {
   const finishReveal = useOnline((s) => s.finishReveal)
   const setDraftRaw = useOnline((s) => s.setDraft)
   const leaveRoom = useOnline((s) => s.leaveRoom)
+  const customCards = useOnline((s) => s.customCards)
+  const addCustomCard = useOnline((s) => s.addCustomCard)
+  const removeCustomCard = useOnline((s) => s.removeCustomCard)
+  const deleteRoom = useOnline((s) => s.deleteRoom)
   const now = useNow()
 
   useEffect(() => {
@@ -157,11 +162,20 @@ export function OnlineLayout() {
       handoff: false,
       acknowledgeHandoff: () => undefined,
       endGame: async () => leaveRoom(),
+      lookup: lookupFor(customCards),
+      customCards,
+      addCustomCard,
+      removeCustomCard,
+      deleteRoom,
     }
   }, [
     state,
     uid,
     roomId,
+    customCards,
+    addCustomCard,
+    removeCustomCard,
+    deleteRoom,
     now,
     busy,
     drafts,

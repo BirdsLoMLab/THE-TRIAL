@@ -2,7 +2,14 @@
 // the reducer state in src/game. Documents are validated with zod on read so a
 // corrupt or older document fails loudly instead of crashing a screen.
 import { z } from 'zod'
-import type { CardRecord, Player, PlayerId, RoomSettings, RoomState } from '../game/types'
+import type {
+  CardRecord,
+  CustomCard,
+  Player,
+  PlayerId,
+  RoomSettings,
+  RoomState,
+} from '../game/types'
 
 const answerSchema = z.object({ text: z.string(), at: z.number() })
 const followUpSchema = z.object({
@@ -73,6 +80,7 @@ export const roomDocSchema = z.object({
   lighter: z.object({ until: z.number() }).nullable(),
   paused: z.object({ by: z.string(), at: z.number(), note: z.string() }).nullable(),
   nudge: z.object({ by: z.string(), at: z.number() }).nullable().default(null),
+  deleteRequests: z.record(z.string(), z.number()).default({}),
   passedCards: z.record(z.string(), z.number()),
 })
 
@@ -92,10 +100,25 @@ export const cardDocSchema = z.object({
   reactions: z.record(z.string(), z.array(z.string())),
   favorite: z.boolean(),
   readBy: z.record(z.string(), z.number()),
-  status: z.enum(['open', 'closed', 'passed']),
+  status: z.enum(['open', 'closed', 'passed', 'hidden']),
   closedAt: z.number().nullable(),
   passedBy: z.string().nullable(),
 })
+
+export const customCardDocSchema = z.object({
+  text: z.string(),
+  type: z.enum(['question', 'current']),
+  level: z.literal([1, 2, 3]).nullable(),
+  adult: z.boolean(),
+  createdBy: z.string(),
+  createdAt: z.number(),
+})
+
+export type CustomCardDoc = z.infer<typeof customCardDocSchema>
+
+export function parseCustomCardDoc(id: string, data: unknown): CustomCard {
+  return { id, ...customCardDocSchema.parse(data) }
+}
 
 export const privateAnswerSchema = answerSchema
 
@@ -136,6 +159,7 @@ export function toRoomDoc(state: RoomState): RoomDoc {
     lighter: state.lighter ? { ...state.lighter } : null,
     paused: state.paused ? { ...state.paused } : null,
     nudge: state.nudge ? { ...state.nudge } : null,
+    deleteRequests: { ...state.deleteRequests },
     passedCards: { ...state.passedCards },
   }
 }
@@ -223,6 +247,7 @@ export function fromRoomDoc(
     lighter: doc.lighter,
     paused: doc.paused,
     nudge: doc.nudge,
+    deleteRequests: doc.deleteRequests,
     passedCards: doc.passedCards,
     cards: cards as readonly CardRecord[],
   }

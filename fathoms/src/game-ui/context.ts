@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
+import type { CustomCardInput } from '../game/custom'
 import type { Action, Reply } from '../game/turns'
-import type { PlayerId, RoomState } from '../game/types'
+import type { CardLookup, CustomCard, PlayerId, RoomState } from '../game/types'
 
 export interface SendInput {
   readonly close?: string | undefined
@@ -36,6 +37,13 @@ export interface GameAdapter {
   acknowledgeHandoff(): void
   /** Same Device: delete the game. Online: forget the room on this device. */
   endGame(): Promise<void>
+  /** Bundled cards plus this game's custom cards. */
+  readonly lookup: CardLookup
+  readonly customCards: readonly CustomCard[]
+  addCustomCard(input: CustomCardInput): Promise<CustomCard>
+  removeCustomCard(id: string): Promise<void>
+  /** Online: the hard delete once both players confirmed. Same Device: the same as endGame. */
+  deleteRoom(): Promise<void>
 }
 
 export const GameContext = createContext<GameAdapter | null>(null)

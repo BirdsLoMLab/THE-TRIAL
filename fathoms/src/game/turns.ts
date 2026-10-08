@@ -46,6 +46,7 @@ export type GameErrorCode =
   | 'invalid-deck'
   | 'own-turn'
   | 'nudge-too-soon'
+  | 'adult-confirmation'
 
 /** Thrown for any action the rules do not allow. The UI shows `message`; Firestore transactions abort. */
 export class GameError extends Error {
@@ -150,6 +151,41 @@ export type Action =
       }
     }
   | { readonly type: 'nudge'; readonly by: PlayerId; readonly at: number }
+  | {
+      readonly type: 'react'
+      readonly by: PlayerId
+      readonly at: number
+      readonly seq: number
+      readonly emoji: string
+    }
+  | {
+      readonly type: 'favorite'
+      readonly by: PlayerId
+      readonly at: number
+      readonly seq: number
+      readonly on: boolean
+    }
+  | { readonly type: 'markRead'; readonly by: PlayerId; readonly at: number; readonly seq: number }
+  | {
+      readonly type: 'afterDark'
+      readonly by: PlayerId
+      readonly at: number
+      readonly enabled: boolean
+      /** The player confirmed they are 18 or older. Required to enable. */
+      readonly confirmAdult: boolean
+    }
+  | {
+      readonly type: 'excludeTags'
+      readonly by: PlayerId
+      readonly at: number
+      readonly tags: readonly string[]
+    }
+  | {
+      readonly type: 'requestDelete'
+      readonly by: PlayerId
+      readonly at: number
+      readonly on: boolean
+    }
 
 export interface CatchUp {
   /** The card the holder opened last turn, now closed or passed by the partner. */
@@ -392,7 +428,7 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
   for (let i = state.cards.length - 1; i >= 0; i--) {
     const card = state.cards[i] as CardRecord
     if (card.openerUid !== holder || card.status === 'open') continue
-    if ((card.closedAt ?? -Infinity) > lastTurnAt) {
+    if (card.status !== 'hidden' && (card.closedAt ?? -Infinity) > lastTurnAt) {
       catchUp = {
         card,
         canAskFollowUp:
@@ -492,6 +528,7 @@ export function createRoom(input: CreateRoomInput): RoomState {
     lighter: null,
     paused: null,
     nudge: null,
+    deleteRequests: {},
     passedCards: {},
     cards: [],
   }
@@ -766,6 +803,129 @@ function nudge(state: RoomState, action: Extract<Action, { type: 'nudge' }>): Ro
   return { ...state, nudge: { by: action.by, at: action.at } }
 }
 
+/** Both players asked for the room to be deleted. */
+export function deleteConfirmed(state: RoomState): boolean {
+  return state.order.every((uid) => state.deleteRequests[uid] !== undefined)
+}
+
+/** A card that still carries content: closed or passed. */
+function requireRevealed(state: RoomState, seq: number): CardRecord {
+  const card = requireCard(state, seq)
+  if (card.status !== 'closed' && card.status !== 'passed')
+    fail('card-not-closed', `card ${seq} has no reveal yet`)
+  return card
+}
+
+/**
+ * Drops undealt cards the room may no longer deal: After Dark cards unless
+ * both players enabled it, and cards carrying a tag either player excluded.
+ */
+function pruneDeck(state: RoomState, lookup: CardLookup): RoomState {
+  const players = state.order.map((uid) => requirePlayer(state, uid))
+  const adultAllowed = players.every((player) => player.afterDarkEnabled)
+  const excluded = new Set(players.flatMap((player) => player.excludeTags))
+  const dealt = state.deck.cards.slice(0, state.deck.dealt)
+  const rest = state.deck.cards.slice(state.deck.dealt).filter((id) => {
+    const card = lookup(id)
+    if (!card) return true
+    if (card.adult && !adultAllowed) return false
+    return !card.tags.some((tag) => excluded.has(tag))
+  })
+  return { ...state, deck: { ...state.deck, cards: [...dealt, ...rest] } }
+}
+
+function react(state: RoomState, action: Extract<Action, { type: 'react' }>): RoomState {
+  requirePlayer(state, action.by)
+  const card = requireRevealed(state, action.seq)
+  const emoji = cleanText(action.emoji, 'empty-text')
+  const current = card.reactions[emoji] ?? []
+  const next = current.includes(action.by)
+    ? current.filter((uid) => uid !== action.by)
+    : [...current, action.by]
+  const reactions: Record<string, readonly PlayerId[]> = { ...card.reactions }
+  if (next.length) reactions[emoji] = next
+  else delete reactions[emoji]
+  return { ...state, cards: replaceCard(state.cards, { ...card, reactions }) }
+}
+
+function favorite(state: RoomState, action: Extract<Action, { type: 'favorite' }>): RoomState {
+  requirePlayer(state, action.by)
+  const card = requireCard(state, action.seq)
+  if (card.status === 'hidden') fail('card-not-closed', `card ${action.seq} is hidden`)
+  return { ...state, cards: replaceCard(state.cards, { ...card, favorite: action.on }) }
+}
+
+/** Stamps the reader. An After Dark card both players read is hidden when the room says so (PLAN 4.8). */
+function markRead(state: RoomState, action: Extract<Action, { type: 'markRead' }>): RoomState {
+  requirePlayer(state, action.by)
+  const card = requireCard(state, action.seq)
+  if (card.status !== 'closed') fail('card-not-closed', `card ${action.seq} has no reveal yet`)
+  const readBy = action.by in card.readBy ? card.readBy : { ...card.readBy, [action.by]: action.at }
+  const bothRead = state.order.every((uid) => uid in readBy)
+  const hide = card.adult && state.settings.afterDarkRetention === 'hide-after-read' && bothRead
+  const next: CardRecord = hide
+    ? { ...card, readBy, status: 'hidden', cardText: '', answers: {}, followUps: {}, reactions: {} }
+    : { ...card, readBy }
+  return { ...state, cards: replaceCard(state.cards, next) }
+}
+
+/** Each player switches After Dark for themselves. Turning it off prunes the deck and passes an open adult card for free. */
+function afterDark(
+  state: RoomState,
+  action: Extract<Action, { type: 'afterDark' }>,
+  lookup: CardLookup,
+): RoomState {
+  const player = requirePlayer(state, action.by)
+  if (action.enabled && !action.confirmAdult)
+    fail('adult-confirmation', 'confirm you are 18 or older first')
+  let next = patchPlayer(state, action.by, {
+    afterDarkEnabled: action.enabled,
+    afterDarkConfirmedAt: action.enabled ? action.at : player.afterDarkConfirmedAt,
+  })
+  if (action.enabled) return next
+  const open = openCard(next)
+  if (open?.adult) {
+    next = {
+      ...next,
+      openSeq: 0,
+      passedCards: { ...next.passedCards, [open.cardId]: action.at },
+      cards: replaceCard(next.cards, {
+        ...open,
+        status: 'passed',
+        closedAt: action.at,
+        passedBy: action.by,
+      }),
+    }
+  }
+  return pruneDeck(next, lookup)
+}
+
+function excludeTags(
+  state: RoomState,
+  action: Extract<Action, { type: 'excludeTags' }>,
+  lookup: CardLookup,
+): RoomState {
+  requirePlayer(state, action.by)
+  const tags: string[] = []
+  for (const raw of action.tags) {
+    const tag = typeof raw === 'string' ? raw.trim() : ''
+    if (!tag) fail('invalid-player', 'tags are non empty words')
+    if (!tags.includes(tag)) tags.push(tag)
+  }
+  return pruneDeck(patchPlayer(state, action.by, { excludeTags: tags }), lookup)
+}
+
+function requestDelete(
+  state: RoomState,
+  action: Extract<Action, { type: 'requestDelete' }>,
+): RoomState {
+  requirePlayer(state, action.by)
+  const deleteRequests: Record<PlayerId, number> = { ...state.deleteRequests }
+  if (action.on) deleteRequests[action.by] = action.at
+  else delete deleteRequests[action.by]
+  return { ...state, deleteRequests }
+}
+
 function apply(state: RoomState, action: Action, lookup: CardLookup): RoomState {
   switch (action.type) {
     case 'agreeRules':
@@ -792,6 +952,18 @@ function apply(state: RoomState, action: Action, lookup: CardLookup): RoomState 
       return updatePlayer(state, action)
     case 'nudge':
       return nudge(state, action)
+    case 'react':
+      return react(state, action)
+    case 'favorite':
+      return favorite(state, action)
+    case 'markRead':
+      return markRead(state, action)
+    case 'afterDark':
+      return afterDark(state, action, lookup)
+    case 'excludeTags':
+      return excludeTags(state, action, lookup)
+    case 'requestDelete':
+      return requestDelete(state, action)
     default:
       return fail('unknown-action', `unknown action ${String((action as { type?: unknown }).type)}`)
   }

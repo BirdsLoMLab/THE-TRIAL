@@ -49,6 +49,7 @@ function roomDoc(holder: string, since: number, extra: Record<string, unknown> =
     lighter: null,
     paused: null,
     nudge: null,
+    deleteRequests: {},
     passedCards: {},
     ...extra,
   }

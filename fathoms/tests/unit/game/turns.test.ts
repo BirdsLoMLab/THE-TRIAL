@@ -159,6 +159,7 @@ describe('createRoom', () => {
     expect(state.lighter).toBeNull()
     expect(state.paused).toBeNull()
     expect(state.nudge).toBeNull()
+    expect(state.deleteRequests).toEqual({})
     expect(state.passedCards).toEqual({})
     expect(state.cards).toEqual([])
     expect(state.deck).toEqual(deckOf(['q1', 'q2']))

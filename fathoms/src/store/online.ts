@@ -6,25 +6,31 @@ import { nanoid } from 'nanoid'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { getContent } from '../content'
+import { newCustomCard, type CustomCardInput } from '../game/custom'
 import { buildDeck } from '../game/deck'
-import { deckHistory, type Action } from '../game/turns'
-import type { RoomSettings, RoomState } from '../game/types'
+import { deckHistory, deleteConfirmed, type Action } from '../game/turns'
+import type { CustomCard, RoomSettings, RoomState } from '../game/types'
 import { cancelBackupReminders, scheduleBackupReminders } from '../notifications/localReminders'
 import { registerForPush, type PushState } from '../notifications/push'
 import { ensureSignedIn } from '../sync/auth'
 import { getFirebaseServices } from '../sync/firebase'
 import {
+  addCustomCard as addCustomCardDoc,
   addPushToken,
   createOnlineRoom,
+  deleteCustomCard,
+  deleteRoom as deleteRoomDocs,
   joinOnlineRoom,
   runRoomAction,
+  subscribeCustomCards,
   subscribeRoom,
   SyncError,
   touchPresence,
   type RoomSnapshot,
 } from '../sync/roomRepo'
 import { clock } from './clock'
-import { cardLookup, defaultRoomSettings } from './sameDevice'
+import { lookupFor, poolFor } from './lookup'
+import { defaultRoomSettings } from './sameDevice'
 
 export const ONLINE_STORAGE_KEY = 'fathoms.online'
 export const PRESENCE_INTERVAL_MS = 60_000
@@ -49,6 +55,7 @@ export interface OnlineData {
   readonly drafts: Readonly<Record<string, string>>
   /** Push registration on this device: unknown until asked. */
   readonly pushState: PushState | 'unknown'
+  readonly customCards: readonly CustomCard[]
 }
 
 export interface OnlineActions {
@@ -69,6 +76,10 @@ export interface OnlineActions {
   setDraft(key: string, text: string): void
   /** Asks for notification permission and registers this device for push. Safe to call again. */
   enablePush(): Promise<PushState>
+  addCustomCard(input: CustomCardInput): Promise<CustomCard>
+  removeCustomCard(id: string): Promise<void>
+  /** The hard delete, once both players asked for it. Forgets the room on this device afterwards. */
+  deleteRoom(): Promise<void>
 }
 
 export type OnlineStore = OnlineData & OnlineActions
@@ -83,9 +94,11 @@ const EMPTY: OnlineData = {
   reveal: null,
   drafts: {},
   pushState: 'unknown',
+  customCards: [],
 }
 
 let unsubscribe: Unsubscribe | null = null
+let unsubscribeCustom: Unsubscribe | null = null
 let presenceTimer: ReturnType<typeof setInterval> | null = null
 let signingIn: Promise<string> | null = null
 let pushRegistered = false
@@ -139,6 +152,8 @@ export const useOnline = create<OnlineStore>()(
       function stopRoom() {
         unsubscribe?.()
         unsubscribe = null
+        unsubscribeCustom?.()
+        unsubscribeCustom = null
         if (presenceTimer) clearInterval(presenceTimer)
         presenceTimer = null
       }
@@ -160,7 +175,20 @@ export const useOnline = create<OnlineStore>()(
       function startRoom(roomId: string, uid: string) {
         stopRoom()
         const { db } = services()
-        set({ roomId, status: 'connecting', error: null, snapshot: null, reveal: null })
+        set({
+          roomId,
+          status: 'connecting',
+          error: null,
+          snapshot: null,
+          reveal: null,
+          customCards: [],
+        })
+        unsubscribeCustom = subscribeCustomCards(
+          db,
+          roomId,
+          (customCards) => set({ customCards }),
+          () => undefined,
+        )
         unsubscribe = subscribeRoom(db, roomId, uid, {
           onChange: (snapshot) => {
             set({ snapshot, status: 'live', error: null })
@@ -253,7 +281,7 @@ export const useOnline = create<OnlineStore>()(
           if (!roomId) throw new SyncError('not-found', 'No room is open.')
           set({ busy: true })
           try {
-            await runRoomAction(services().db, roomId, action, cardLookup())
+            await runRoomAction(services().db, roomId, action, lookupFor(get().customCards))
           } finally {
             set({ busy: false })
           }
@@ -293,7 +321,7 @@ export const useOnline = create<OnlineStore>()(
                 excludeTags: player?.excludeTags ?? [],
               }
             }),
-            pool: getContent().cards,
+            pool: poolFor(get().customCards),
             history: deckHistory(state),
             seed: nanoid(),
             now,
@@ -310,6 +338,38 @@ export const useOnline = create<OnlineStore>()(
           if (text) drafts[key] = text
           else delete drafts[key]
           set({ drafts })
+        },
+
+        async addCustomCard(input) {
+          const { roomId, uid } = get()
+          if (!roomId || !uid) throw new SyncError('not-found', 'No room is open.')
+          const card = newCustomCard(input, `custom-${nanoid(10)}`, uid, clock.now())
+          await addCustomCardDoc(services().db, roomId, card)
+          return card
+        },
+
+        async removeCustomCard(id) {
+          const { roomId } = get()
+          if (!roomId) throw new SyncError('not-found', 'No room is open.')
+          await deleteCustomCard(services().db, roomId, id)
+        },
+
+        async deleteRoom() {
+          const { roomId } = get()
+          const state = readyState(get().snapshot)
+          if (!roomId || !state) throw new SyncError('not-found', 'No room is open.')
+          if (!deleteConfirmed(state))
+            throw new SyncError('invalid', 'Both players have to confirm first.')
+          stopRoom()
+          await deleteRoomDocs(services().db, roomId)
+          set({
+            roomId: null,
+            snapshot: null,
+            status: 'idle',
+            error: null,
+            reveal: null,
+            customCards: [],
+          })
         },
 
         async enablePush() {

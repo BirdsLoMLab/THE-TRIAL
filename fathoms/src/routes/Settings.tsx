@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { getContent } from '../content'
 import { countCards } from '../content/schema'
 import { GameError, roomPhase } from '../game/turns'
 import type { LevelId, PlayerId, Progression, RoomSettings } from '../game/types'
 import { useGame } from '../game-ui/context'
+import { deleteConfirmed } from '../game/turns'
+import { useLock } from '../lock/lock'
 import { clock } from '../store/clock'
 import { useOnline } from '../store/online'
+import { playerName } from '../components/cardMeta'
 import { ColorPicker } from '../components/ColorPicker'
 import {
   Button,
@@ -32,6 +35,7 @@ interface DeckDraft {
   progression: Progression
   currentEvery: number
   excludeAnswered: boolean
+  customCardsEnabled: boolean
   passesPerDeck: number
   closerSeesOpener: boolean
 }
@@ -274,6 +278,336 @@ function RemindersSection() {
   )
 }
 
+/** PLAN 4.9: each player switches After Dark on for themselves after confirming they are an adult. */
+function AfterDarkSection() {
+  const game = useGame()
+  const { room } = game
+  const actor = game.mode === 'online' ? game.viewer : room.ball.holderUid
+  const me = room.players[actor]
+  const partner = room.order.find((uid) => uid !== actor)
+  const [confirm, setConfirm] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const content = getContent()
+  const adultPack = content.packs.find((pack) => pack.adult)
+  const packOn = adultPack ? room.settings.packs.includes(adultPack.id) : false
+  const bothOn = room.order.every((uid) => room.players[uid]?.afterDarkEnabled)
+
+  async function run(action: Parameters<typeof game.dispatch>[0]) {
+    setError(null)
+    try {
+      await game.dispatch(action)
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
+  async function toggle(enabled: boolean) {
+    await run({ type: 'afterDark', by: actor, at: clock.now(), enabled, confirmAdult: confirm })
+    if (enabled && adultPack && !packOn) {
+      await run({
+        type: 'updateSettings',
+        by: actor,
+        at: clock.now(),
+        patch: { packs: [...room.settings.packs, adultPack.id] },
+      })
+    }
+  }
+
+  if (!adultPack || !me) return null
+  return (
+    <section>
+      <SectionLabel>After Dark</SectionLabel>
+      <div className="bg-surface border-edge flex flex-col gap-3 rounded-3xl border p-4">
+        <p className="text-ink-muted text-sm">
+          {adultPack.blurb}{' '}
+          {bothOn
+            ? 'On for both of you: its cards join the next deck.'
+            : partner
+              ? `${playerName(room, partner)} ${room.players[partner]?.afterDarkEnabled ? 'has it on' : 'has it off'}.`
+              : ''}
+        </p>
+        {me.afterDarkEnabled ? (
+          <Button block onClick={() => toggle(false)} data-testid="settings-afterdark-off">
+            Turn After Dark off for me
+          </Button>
+        ) : (
+          <>
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1 h-5 w-5"
+                checked={confirm}
+                onChange={(e) => setConfirm(e.target.checked)}
+                data-testid="settings-afterdark-confirm"
+              />
+              <span>I am 18 or older and I want explicit cards in this room.</span>
+            </label>
+            <Button
+              variant="primary"
+              block
+              disabled={!confirm || game.busy}
+              onClick={() => toggle(true)}
+              data-testid="settings-afterdark-on"
+            >
+              Turn After Dark on for me
+            </Button>
+          </>
+        )}
+        <label className="flex min-h-12 items-center justify-between gap-4">
+          <span>
+            <span className="block text-base">Keep After Dark entries in the journal</span>
+            <span className="text-ink-muted block text-xs">
+              Off hides each one after you have both read it. Hidden entries are gone for good.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="h-6 w-6 shrink-0"
+            checked={room.settings.afterDarkRetention === 'keep'}
+            onChange={(e) =>
+              run({
+                type: 'updateSettings',
+                by: actor,
+                at: clock.now(),
+                patch: { afterDarkRetention: e.target.checked ? 'keep' : 'hide-after-read' },
+              })
+            }
+            data-testid="settings-afterdark-retention"
+          />
+        </label>
+        <p className="text-ink-muted text-xs">
+          Turn alerts for After Dark cards never show the card text. An app lock is below.
+        </p>
+        {error && <Notice tone="error">{error}</Notice>}
+      </div>
+    </section>
+  )
+}
+
+/** PLAN 4.9: tags a player excludes are excluded for the room; the partner sees only that something is excluded. */
+function TagExclusionSection() {
+  const game = useGame()
+  const { room } = game
+  const actor = game.mode === 'online' ? game.viewer : room.ball.holderUid
+  const me = room.players[actor]
+  const partner = room.order.find((uid) => uid !== actor)
+  const [error, setError] = useState<string | null>(null)
+  const content = getContent()
+  const tags = useMemo(() => {
+    const set = new Set<string>()
+    for (const pack of content.packs) {
+      if (!room.settings.packs.includes(pack.id)) continue
+      if (pack.adult && !room.order.every((uid) => room.players[uid]?.afterDarkEnabled)) continue
+      for (const card of pack.cards) for (const tag of card.tags) set.add(tag)
+    }
+    return [...set].sort()
+  }, [content.packs, room])
+  if (!me) return null
+  const mine = new Set(me.excludeTags)
+  const partnerCount = partner ? (room.players[partner]?.excludeTags.length ?? 0) : 0
+
+  async function toggle(tag: string) {
+    setError(null)
+    const next = mine.has(tag)
+      ? me!.excludeTags.filter((t) => t !== tag)
+      : [...me!.excludeTags, tag]
+    try {
+      await game.dispatch({ type: 'excludeTags', by: actor, at: clock.now(), tags: next })
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
+  return (
+    <section>
+      <SectionLabel>Topics to skip</SectionLabel>
+      <div className="bg-surface border-edge rounded-3xl border p-4">
+        <p className="text-ink-muted text-sm">
+          Cards with a topic you tick are left out of the deck for both of you.
+          {game.mode === 'online' && partnerCount > 0
+            ? ` ${playerName(room, partner!)} skips ${partnerCount} ${partnerCount === 1 ? 'topic' : 'topics'} too.`
+            : ''}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Topics">
+          {tags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              aria-pressed={mine.has(tag)}
+              onClick={() => toggle(tag)}
+              data-testid={`settings-tag-${tag}`}
+              className={`min-h-10 rounded-full border px-3 text-sm ${mine.has(tag) ? 'border-afterdark text-ink line-through' : 'border-edge text-ink-muted'}`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+        {error && <Notice tone="error">{error}</Notice>}
+      </div>
+    </section>
+  )
+}
+
+/** PLAN 4.9: PIN with biometric unlock. Local to this phone. */
+function LockSection() {
+  const enabled = useLock((s) => s.enabled)
+  const biometrics = useLock((s) => s.biometrics)
+  const enable = useLock((s) => s.enable)
+  const disable = useLock((s) => s.disable)
+  const setBiometrics = useLock((s) => s.setBiometrics)
+  const [pin, setPin] = useState('')
+  const [again, setAgain] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  async function turnOn() {
+    setError(null)
+    if (pin !== again) {
+      setError('The two PINs differ.')
+      return
+    }
+    try {
+      await enable(pin, true)
+      setPin('')
+      setAgain('')
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
+  async function turnOff() {
+    setError(null)
+    if (!(await disable(pin))) setError('That PIN is not right.')
+    setPin('')
+  }
+
+  return (
+    <section>
+      <SectionLabel>App lock</SectionLabel>
+      <div className="bg-surface border-edge flex flex-col gap-3 rounded-3xl border p-4">
+        <p className="text-ink-muted text-sm">
+          {enabled
+            ? 'On. The Turn and Journal screens ask for the PIN when the app opens or comes back after a while.'
+            : 'A PIN for this phone, with fingerprint or face unlock when the phone has it.'}
+        </p>
+        <TextInput
+          type="password"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          value={pin}
+          placeholder={enabled ? 'Current PIN' : 'New PIN, 4 to 8 digits'}
+          aria-label={enabled ? 'Current PIN' : 'New PIN'}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+          data-testid="settings-lock-pin"
+        />
+        {!enabled && (
+          <TextInput
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            value={again}
+            placeholder="Same PIN again"
+            aria-label="Repeat the PIN"
+            onChange={(e) => setAgain(e.target.value.replace(/\D/g, '').slice(0, 8))}
+            data-testid="settings-lock-pin-again"
+          />
+        )}
+        {enabled ? (
+          <>
+            <Toggle
+              label="Fingerprint or face unlock"
+              checked={biometrics}
+              onChange={setBiometrics}
+              testId="settings-lock-biometrics"
+            />
+            <Button
+              block
+              onClick={turnOff}
+              disabled={pin.length < 4}
+              data-testid="settings-lock-off"
+            >
+              Turn the lock off
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="primary"
+            block
+            onClick={turnOn}
+            disabled={pin.length < 4}
+            data-testid="settings-lock-on"
+          >
+            Turn the lock on
+          </Button>
+        )}
+        {error && <Notice tone="error">{error}</Notice>}
+      </div>
+    </section>
+  )
+}
+
+/** PLAN 4.8: Delete Room is a hard delete that both players confirm. */
+function DeleteRoomControls() {
+  const game = useGame()
+  const navigate = useNavigate()
+  const { room, viewer } = game
+  const [error, setError] = useState<string | null>(null)
+  const mine = room.deleteRequests[viewer] !== undefined
+  const partner = room.order.find((uid) => uid !== viewer)
+  const theirs = partner ? room.deleteRequests[partner] !== undefined : false
+  const confirmed = deleteConfirmed(room)
+
+  async function run(fn: () => Promise<void>) {
+    setError(null)
+    try {
+      await fn()
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
+  return (
+    <div className="border-edge flex flex-col gap-2 border-t pt-3">
+      <p className="text-sm">
+        Delete the room for both of you.{' '}
+        {theirs
+          ? `${playerName(room, partner!)} already asked.`
+          : 'Both of you have to ask; then either of you can delete it.'}
+      </p>
+      {confirmed ? (
+        <Button
+          variant="danger"
+          block
+          onClick={() =>
+            run(async () => {
+              await game.deleteRoom()
+              navigate('/')
+            })
+          }
+          data-testid="settings-delete-room"
+        >
+          Delete the room now
+        </Button>
+      ) : (
+        <Button
+          variant={mine ? 'ghost' : 'danger'}
+          block
+          onClick={() =>
+            run(() =>
+              game.dispatch({ type: 'requestDelete', by: viewer, at: clock.now(), on: !mine }),
+            )
+          }
+          data-testid="settings-delete-request"
+        >
+          {mine ? 'Withdraw my delete request' : 'Ask to delete the room'}
+        </Button>
+      )}
+      {error && <Notice tone="error">{error}</Notice>}
+    </div>
+  )
+}
+
 export function Settings() {
   const navigate = useNavigate()
   const game = useGame()
@@ -286,6 +620,7 @@ export function Settings() {
     progression: room.settings.progression,
     currentEvery: room.settings.currentEvery,
     excludeAnswered: room.settings.excludeAnswered,
+    customCardsEnabled: room.settings.customCardsEnabled,
     passesPerDeck: room.settings.passesPerDeck,
     closerSeesOpener: room.settings.closerSeesOpener,
   }))
@@ -517,6 +852,21 @@ export function Settings() {
               testId="settings-exclude-answered"
             />
             <Toggle
+              label="Custom cards"
+              hint="Cards you write join the next deck."
+              checked={draft.customCardsEnabled}
+              onChange={(customCardsEnabled) => setDraft({ ...draft, customCardsEnabled })}
+              testId="settings-custom-cards"
+            />
+            <LinkButton
+              to={`${game.basePath}/cards`}
+              variant="ghost"
+              block
+              data-testid="settings-custom-cards-link"
+            >
+              Write your own cards ({game.customCards.length})
+            </LinkButton>
+            <Toggle
               label="Closer sees the opener's answer"
               hint="Off means both answers are written blind."
               checked={draft.closerSeesOpener}
@@ -544,6 +894,10 @@ export function Settings() {
             </Button>
           </div>
         </section>
+
+        <AfterDarkSection />
+        <TagExclusionSection />
+        <LockSection />
 
         <section>
           <SectionLabel>Game</SectionLabel>
@@ -575,6 +929,7 @@ export function Settings() {
                 </Button>
               </>
             )}
+            {game.mode === 'online' && <DeleteRoomControls />}
             {confirmEnd ? (
               <div className="flex flex-col gap-2">
                 <p className="text-sm">

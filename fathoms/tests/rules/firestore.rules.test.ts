@@ -74,6 +74,7 @@ function roomDoc(uids: string[], extra: Record<string, unknown> = {}) {
     lighter: null,
     paused: null,
     nudge: null,
+    deleteRequests: {},
     passedCards: {},
     ...extra,
   }
@@ -263,7 +264,8 @@ describe('cards', () => {
     await assertFails(
       setDoc(doc(db(CAROL), `rooms/${ROOM}/cards/0008`), cardDoc(CAROL, ALICE, { seq: 8 })),
     )
-    await assertFails(deleteDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`)))
+    await assertFails(deleteDoc(doc(db(CAROL), `rooms/${ROOM}/cards/0001`)))
+    await assertSucceeds(deleteDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`)))
   })
 
   it('take an answer only under the writer’s own key', async () => {
@@ -366,6 +368,66 @@ describe('cards', () => {
   })
 })
 
+describe('card read stamps and tombstones', () => {
+  beforeEach(async () => {
+    await seed(
+      `rooms/${ROOM}/cards/0001`,
+      cardDoc(ALICE, BOB, {
+        status: 'closed',
+        closedAt: 3,
+        adult: true,
+        answers: { [ALICE]: { text: 'a', at: 1 }, [BOB]: { text: 'b', at: 3 } },
+      }),
+    )
+  })
+
+  it('take read stamps under the reader key only', async () => {
+    await assertSucceeds(
+      updateDoc(doc(db(BOB), `rooms/${ROOM}/cards/0001`), { [`readBy.${BOB}`]: 4 }),
+    )
+    await assertFails(
+      updateDoc(doc(db(BOB), `rooms/${ROOM}/cards/0001`), { [`readBy.${ALICE}`]: 4 }),
+    )
+  })
+
+  it('hide an After Dark card both players read, and nothing else', async () => {
+    await assertSucceeds(
+      updateDoc(doc(db(BOB), `rooms/${ROOM}/cards/0001`), { [`readBy.${BOB}`]: 4 }),
+    )
+    const tombstone = {
+      status: 'hidden',
+      cardText: '',
+      answers: {},
+      followUps: {},
+      reactions: {},
+      readBy: { [BOB]: 4, [ALICE]: 5 },
+    }
+    await assertFails(
+      updateDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`), { ...tombstone, readBy: { [BOB]: 4 } }),
+    )
+    await assertFails(
+      updateDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`), {
+        ...tombstone,
+        cardText: 'still here',
+      }),
+    )
+    await assertFails(updateDoc(doc(db(CAROL), `rooms/${ROOM}/cards/0001`), tombstone))
+    await assertSucceeds(updateDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`), tombstone))
+    await assertFails(updateDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0001`), { status: 'closed' }))
+    await seed(
+      `rooms/${ROOM}/cards/0002`,
+      cardDoc(ALICE, BOB, {
+        seq: 2,
+        status: 'closed',
+        closedAt: 3,
+        adult: false,
+        readBy: { [ALICE]: 1, [BOB]: 2 },
+      }),
+    )
+    await assertFails(updateDoc(doc(db(ALICE), `rooms/${ROOM}/cards/0002`), tombstone))
+  })
+})
+
 describe('private answers', () => {
   beforeEach(async () => {
     await seed(`rooms/${ROOM}/cards/0001`, cardDoc(ALICE, BOB))
@@ -382,6 +444,8 @@ describe('private answers', () => {
     await assertFails(
       setDoc(doc(db(CAROL), `rooms/${ROOM}/cards/0001/private/${CAROL}`), { text: 'x', at: 3 }),
     )
+    await assertFails(deleteDoc(doc(db(CAROL), `rooms/${ROOM}/cards/0001/private/${ALICE}`)))
+    await assertSucceeds(deleteDoc(doc(db(BOB), `rooms/${ROOM}/cards/0001/private/${ALICE}`)))
   })
 
   it('stay hidden from the partner while the card is open', async () => {

@@ -90,19 +90,38 @@ service cloud.firestore {
               && after[partner].diff(before[partner]).affectedKeys().hasOnly(['reply']));
         }
 
-        function fixedFieldsOk() {
-          return !request.resource.data.diff(card()).affectedKeys().hasAny(
-            ['seq', 'cardId', 'cardText', 'pack', 'adult', 'level', 'type', 'dealtAt', 'openerUid', 'closerUid']
-          );
+        // An After Dark card both players read turns into a tombstone: content gone, seq kept (PLAN 4.8).
+        function hiding() {
+          let after = request.resource.data;
+          return card().status == 'closed'
+            && after.status == 'hidden'
+            && card().adult == true
+            && after.cardText == ''
+            && after.answers.size() == 0
+            && after.followUps.size() == 0
+            && after.reactions.size() == 0
+            && after.readBy.keys().hasAll([card().openerUid, card().closerUid]);
         }
 
-        // open stays open, or moves once to closed or passed. Only the closer closes.
+        function fixedFieldsOk() {
+          return !request.resource.data.diff(card()).affectedKeys().hasAny(
+            ['seq', 'cardId', 'pack', 'adult', 'level', 'type', 'dealtAt', 'openerUid', 'closerUid']
+          ) && (request.resource.data.cardText == card().cardText || hiding());
+        }
+
+        // A player stamps only their own read.
+        function readByOk() {
+          return request.resource.data.readBy.diff(card().readBy).affectedKeys().hasOnly([request.auth.uid]);
+        }
+
+        // open stays open, or moves once to closed or passed. Only the closer closes. closed may hide.
         function statusOk() {
           let before = card().status;
           let after = request.resource.data.status;
           return after == before
             || (before == 'open' && after == 'passed')
-            || (before == 'open' && after == 'closed' && request.auth.uid == card().closerUid);
+            || (before == 'open' && after == 'closed' && request.auth.uid == card().closerUid)
+            || hiding();
         }
 
         allow read: if isMemberOf(roomId);
@@ -114,17 +133,18 @@ service cloud.firestore {
         allow update: if isMemberOf(roomId)
           && fixedFieldsOk()
           && statusOk()
-          && answersOk()
-          && ownFollowUpOk()
-          && partnerFollowUpOk();
-        allow delete: if false;
+          && readByOk()
+          && (hiding() || (answersOk() && ownFollowUpOk() && partnerFollowUpOk()));
+        // Delete Room (both players confirmed) removes every card.
+        allow delete: if isMemberOf(roomId);
 
         match /private/{uid} {
           function parentCard() {
             return get(/databases/$(database)/documents/rooms/$(roomId)/cards/$(seq)).data;
           }
 
-          allow write: if isMemberOf(roomId) && uid == request.auth.uid;
+          allow create, update: if isMemberOf(roomId) && uid == request.auth.uid;
+          allow delete: if isMemberOf(roomId);
           allow read: if signedIn()
             && (uid == request.auth.uid
               || (isMemberOf(roomId)

@@ -7,14 +7,17 @@ import { FirebaseError } from 'firebase/app'
 import {
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   runTransaction,
   setDoc,
   updateDoc,
+  writeBatch,
   type DocumentReference,
   type Firestore,
   type Transaction,
@@ -27,6 +30,7 @@ import type {
   Answer,
   CardLookup,
   CardRecord,
+  CustomCard,
   PlayerId,
   PoolCard,
   RoomSettings,
@@ -36,6 +40,7 @@ import {
   cardDocId,
   fromRoomDoc,
   parseCardDoc,
+  parseCustomCardDoc,
   parseRoomDoc,
   roomIsComplete,
   toCardDoc,
@@ -131,6 +136,7 @@ export async function createOnlineRoom(
     lighter: null,
     paused: null,
     nudge: null,
+    deleteRequests: {},
     passedCards: {},
   }
   try {
@@ -285,6 +291,77 @@ export async function addPushToken(
 ): Promise<void> {
   try {
     await updateDoc(roomRef(db, roomId), { [`players.${uid}.fcmTokens`]: arrayUnion(token) })
+  } catch (error) {
+    throw asSyncError(error)
+  }
+}
+
+export function customCardsQuery(db: Firestore, roomId: string) {
+  return query(collection(db, 'rooms', roomId, 'customCards'), orderBy('createdAt'))
+}
+
+/** Live list of the room's custom cards, in creation order. */
+export function subscribeCustomCards(
+  db: Firestore,
+  roomId: string,
+  onChange: (cards: CustomCard[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    customCardsQuery(db, roomId),
+    (snap) => {
+      try {
+        onChange(snap.docs.map((d) => parseCustomCardDoc(d.id, d.data())))
+      } catch (error) {
+        onError(asSyncError(error))
+      }
+    },
+    (error) => onError(asSyncError(error)),
+  )
+}
+
+export async function addCustomCard(
+  db: Firestore,
+  roomId: string,
+  card: CustomCard,
+): Promise<void> {
+  const { id, ...data } = card
+  try {
+    await setDoc(doc(db, 'rooms', roomId, 'customCards', id), data)
+  } catch (error) {
+    throw asSyncError(error)
+  }
+}
+
+export async function deleteCustomCard(db: Firestore, roomId: string, id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'rooms', roomId, 'customCards', id))
+  } catch (error) {
+    throw asSyncError(error)
+  }
+}
+
+/**
+ * Delete Room (PLAN 4.8): removes every card, private answer, custom card, and
+ * the room document itself. The caller checks that both players confirmed.
+ */
+export async function deleteRoom(db: Firestore, roomId: string): Promise<void> {
+  try {
+    const refs = []
+    const cards = await getDocs(collection(db, 'rooms', roomId, 'cards'))
+    for (const card of cards.docs) {
+      const privates = await getDocs(collection(card.ref, 'private'))
+      refs.push(...privates.docs.map((d) => d.ref))
+      refs.push(card.ref)
+    }
+    const customs = await getDocs(collection(db, 'rooms', roomId, 'customCards'))
+    refs.push(...customs.docs.map((d) => d.ref))
+    for (let i = 0; i < refs.length; i += 400) {
+      const batch = writeBatch(db)
+      for (const ref of refs.slice(i, i + 400)) batch.delete(ref)
+      await batch.commit()
+    }
+    await deleteDoc(roomRef(db, roomId))
   } catch (error) {
     throw asSyncError(error)
   }

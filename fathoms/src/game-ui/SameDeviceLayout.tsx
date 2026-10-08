@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Navigate, Outlet } from 'react-router'
 import { clock } from '../store/clock'
+import { lookupFor } from '../store/lookup'
 import { useSameDevice } from '../store/sameDevice'
 import { GameContext, type GameAdapter } from './context'
 
@@ -17,6 +18,9 @@ export function SameDeviceLayout() {
   const finishReveal = useSameDevice((s) => s.finishReveal)
   const acknowledgeHandoff = useSameDevice((s) => s.acknowledgeHandoff)
   const endGame = useSameDevice((s) => s.endGame)
+  const customCards = useSameDevice((s) => s.customCards)
+  const addCustomCard = useSameDevice((s) => s.addCustomCard)
+  const removeCustomCard = useSameDevice((s) => s.removeCustomCard)
 
   const adapter = useMemo<GameAdapter | null>(() => {
     if (!room) return null
@@ -39,9 +43,17 @@ export function SameDeviceLayout() {
       handoff,
       acknowledgeHandoff,
       endGame: async () => endGame(),
+      lookup: lookupFor(customCards),
+      customCards,
+      addCustomCard: async (input) => addCustomCard(input, room.ball.holderUid, clock.now()),
+      removeCustomCard: async (id) => removeCustomCard(id),
+      deleteRoom: async () => endGame(),
     }
   }, [
     room,
+    customCards,
+    addCustomCard,
+    removeCustomCard,
     handoff,
     reveal,
     drafts,

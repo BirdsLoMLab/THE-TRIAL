@@ -14,11 +14,13 @@ import {
 } from '../game/turns'
 import type { CardRecord, PlayerId, RoomState } from '../game/types'
 import { useGame, type GameAdapter } from '../game-ui/context'
+import { useMarkRead } from '../game-ui/useMarkRead'
 import { timeAgo, useNow } from '../game-ui/useNow'
-import { cardLookup, draftKey, nextDeckSize } from '../store/sameDevice'
+import { draftKey, nextDeckSize } from '../store/sameDevice'
 import { clock } from '../store/clock'
 import { playerColor, playerName } from '../components/cardMeta'
 import { AnswerList, CardBlock } from '../components/cards'
+import { ReactionRow } from '../components/ReactionRow'
 import {
   Button,
   LinkButton,
@@ -208,6 +210,7 @@ function RevealView({ game, seq }: { readonly game: GameAdapter; readonly seq: n
   const card = cardBySeq(room, seq)
   // The sender is the player who no longer holds the ball.
   const sender = otherPlayer(room, room.ball.holderUid)
+  useMarkRead(card)
   if (!card) return null
   const answers = visibleAnswers(room, card, sender)
   const waitingForOpener = card.status === 'closed' && !answers[card.openerUid]
@@ -239,6 +242,7 @@ function RevealView({ game, seq }: { readonly game: GameAdapter; readonly seq: n
 function CatchUpBlock({ game, view }: { readonly game: GameAdapter; readonly view: TurnView }) {
   const { room } = game
   const catchUp = view.catchUp
+  useMarkRead(catchUp?.card)
   if (!catchUp) return null
   const { card } = catchUp
   const passed = card.status === 'passed'
@@ -256,6 +260,7 @@ function CatchUpBlock({ game, view }: { readonly game: GameAdapter; readonly vie
           order={[card.openerUid, card.closerUid]}
         />
       )}
+      <ReactionRow card={card} viewer={view.holder} />
       {!passed && (
         <div className="mt-4">
           <FollowUpBox game={game} card={card} asker={view.holder} />
@@ -423,7 +428,7 @@ function ExhaustedView({ game, view }: { readonly game: GameAdapter; readonly vi
   const closers = getContent().shared.closers
   const closer = closers[hashSeed(room.deck.seed) % closers.length]
   // The ball passed at ball.since, close enough to now for a count that only informs.
-  const size = nextDeckSize(room, room.ball.since)
+  const size = nextDeckSize(room, room.ball.since, game.customCards)
   async function newDeck() {
     setError(null)
     try {
@@ -690,7 +695,7 @@ function TurnStack({ game, view }: { readonly game: GameAdapter; readonly view: 
 export function Turn() {
   const game = useGame()
   const { room } = game
-  const view = useMemo(() => turnView(room, cardLookup()), [room])
+  const view = useMemo(() => turnView(room, game.lookup), [room, game.lookup])
   const phase = roomPhase(room)
   if (phase === 'paused') return <PausedView game={game} />
   if (game.reveal !== null) return <RevealView game={game} seq={game.reveal} />

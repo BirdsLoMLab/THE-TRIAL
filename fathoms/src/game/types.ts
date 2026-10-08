@@ -39,6 +39,17 @@ export interface CurrentPoolCard {
 
 export type PoolCard = QuestionPoolCard | CurrentPoolCard
 
+/** A card written by a player (PLAN section 5, rooms/{roomId}/customCards). Dealt under the pack id "custom". */
+export interface CustomCard {
+  readonly id: string
+  readonly text: string
+  readonly type: CardType
+  readonly level: LevelId | null
+  readonly adult: boolean
+  readonly createdBy: PlayerId
+  readonly createdAt: number
+}
+
 /** Finds a pool card by id. Returns undefined for ids the pool no longer has. */
 export type CardLookup = (cardId: string) => PoolCard | undefined
 
@@ -124,7 +135,8 @@ export interface FollowUp {
   readonly reply: Answer | null
 }
 
-export type CardStatus = 'open' | 'closed' | 'passed'
+/** hidden: an After Dark card both players read, with its content deleted (PLAN 4.8). */
+export type CardStatus = 'open' | 'closed' | 'passed' | 'hidden'
 
 /** One dealt card. seq is 1-based in deal order. */
 export interface CardRecord {
@@ -188,6 +200,8 @@ export interface RoomState {
   readonly lighter: Lighter | null
   readonly paused: Paused | null
   readonly nudge: Nudge | null
+  /** Delete Room is a hard delete both players confirm (PLAN 4.8). uid to the time they asked. */
+  readonly deleteRequests: Readonly<Record<PlayerId, number>>
   /** cardId to the time it was passed. */
   readonly passedCards: Readonly<Record<string, number>>
   /** Every dealt card, in seq order. A subcollection in Firestore. */
