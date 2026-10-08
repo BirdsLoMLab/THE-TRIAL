@@ -1,14 +1,20 @@
-import { Navigate } from 'react-router'
 import { visibleAnswers } from '../game/turns'
-import type { CardRecord, RoomState } from '../game/types'
-import { useSameDevice } from '../store/sameDevice'
+import type { CardRecord, PlayerId, RoomState } from '../game/types'
+import { useGame } from '../game-ui/context'
 import { packName, playerName } from '../components/cardMeta'
 import { AnswerList, LevelChip } from '../components/cards'
 import { Notice, Screen } from '../components/ui'
 
-function Entry({ room, card }: { readonly room: RoomState; readonly card: CardRecord }) {
-  // The journal is shared on one phone, so an open card shows what the closer may see.
-  const answers = visibleAnswers(room, card, card.closerUid)
+function Entry({
+  room,
+  card,
+  viewer,
+}: {
+  readonly room: RoomState
+  readonly card: CardRecord
+  readonly viewer: PlayerId
+}) {
+  const answers = visibleAnswers(room, card, viewer)
   const followUps = room.order.flatMap((uid) => {
     const followUp = card.followUps[uid]
     return followUp ? [{ uid, followUp }] : []
@@ -45,7 +51,7 @@ function Entry({ room, card }: { readonly room: RoomState; readonly card: CardRe
         </p>
       )}
       {followUps.length > 0 && (
-        <ul className="mt-3 flex flex-col gap-2 border-t border-edge pt-3" aria-label="Follow-ups">
+        <ul className="border-edge mt-3 flex flex-col gap-2 border-t pt-3" aria-label="Follow-ups">
           {followUps.map(({ uid, followUp }) => {
             const other = room.order[0] === uid ? room.order[1] : room.order[0]
             return (
@@ -74,11 +80,11 @@ function Entry({ room, card }: { readonly room: RoomState; readonly card: CardRe
 }
 
 export function Journal() {
-  const room = useSameDevice((s) => s.room)
-  if (!room) return <Navigate to="/" replace />
+  const game = useGame()
+  const { room } = game
   const cards = [...room.cards].reverse()
   return (
-    <Screen title="Journal" back="/same-device/turn" testId="screen-journal">
+    <Screen title="Journal" back={`${game.basePath}/turn`} testId="screen-journal">
       <p className="text-ink-muted mb-4 text-sm" data-testid="journal-count">
         {cards.length} {cards.length === 1 ? 'card' : 'cards'} so far. Newest first.
       </p>
@@ -87,7 +93,13 @@ export function Journal() {
       ) : (
         <ul className="flex flex-col gap-3">
           {cards.map((card) => (
-            <Entry key={card.seq} room={room} card={card} />
+            // One phone shares the journal, so an open card shows what its closer may see. Online, I see my own side.
+            <Entry
+              key={card.seq}
+              room={room}
+              card={card}
+              viewer={game.mode === 'online' ? game.viewer : card.closerUid}
+            />
           ))}
         </ul>
       )}

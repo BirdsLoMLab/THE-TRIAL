@@ -9,3 +9,4 @@ playwright-report/
 pnpm-lock.yaml
 PLAN.md
 CLAUDE.md
+firestore.rules

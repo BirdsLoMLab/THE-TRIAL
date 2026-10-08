@@ -1,0 +1,140 @@
+rules_version = '2';
+
+// Security rules for Fathoms (PLAN section 5). Knowing a room id is the
+// invitation; everything else is gated on membership. Blind close is enforced
+// by the private subcollection: an answer on an open card is readable by its
+// author only, until the card closes or the room allows the closer to peek.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function roomData(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+    }
+
+    function isMemberOf(roomId) {
+      return signedIn() && request.auth.uid in roomData(roomId).players;
+    }
+
+    match /rooms/{roomId} {
+      function isMember() {
+        return signedIn() && request.auth.uid in resource.data.players;
+      }
+
+      // The second player adds only themselves, plus their passes and their place in the order.
+      function isJoin() {
+        return signedIn()
+          && !(request.auth.uid in resource.data.players)
+          && resource.data.players.size() < 2
+          && request.resource.data.players.size() == resource.data.players.size() + 1
+          && request.auth.uid in request.resource.data.players
+          && request.resource.data.players.diff(resource.data.players).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'order', 'passes', 'version']);
+      }
+
+      // The id is the invitation: anyone signed in may read a room that still waits for its
+      // second player, and may learn that a room does not exist.
+      allow get: if isMember() || (signedIn() && (resource == null || resource.data.players.size() < 2));
+      allow list: if false;
+
+      allow create: if signedIn()
+        && roomId.size() >= 16
+        && request.resource.data.players.keys().hasOnly([request.auth.uid])
+        && request.auth.uid in request.resource.data.players
+        && request.resource.data.version == 1;
+
+      // Members change anything as long as they add nobody. Joining is the only way in. The
+      // version check lives in the client transactions: Firestore aborts and retries a stale
+      // transaction, while a rule would reject it for good.
+      allow update: if isJoin()
+        || (isMember() && request.resource.data.players.keys().hasOnly(resource.data.players.keys()));
+
+      allow delete: if isMember();
+
+      match /cards/{seq} {
+        function card() {
+          return resource.data;
+        }
+
+        function partnerOf(uid) {
+          return card().openerUid == uid ? card().closerUid : card().openerUid;
+        }
+
+        // A player writes only their own answer key. Ownership, not content.
+        function answersOk() {
+          return request.resource.data.answers.diff(card().answers).affectedKeys().hasOnly([request.auth.uid]);
+        }
+
+        // Own follow-up: any field but the reply. Partner's follow-up: only the reply, and only on one that exists.
+        function ownFollowUpOk() {
+          let me = request.auth.uid;
+          let before = card().followUps;
+          let after = request.resource.data.followUps;
+          return !(me in after.diff(before).affectedKeys())
+            || after[me].reply == (me in before ? before[me].reply : null);
+        }
+
+        function partnerFollowUpOk() {
+          let me = request.auth.uid;
+          let partner = partnerOf(me);
+          let before = card().followUps;
+          let after = request.resource.data.followUps;
+          let others = after.diff(before).affectedKeys().difference([me].toSet());
+          return others.size() == 0
+            || (others.hasOnly([partner])
+              && partner in before
+              && partner in after
+              && after[partner].diff(before[partner]).affectedKeys().hasOnly(['reply']));
+        }
+
+        function fixedFieldsOk() {
+          return !request.resource.data.diff(card()).affectedKeys().hasAny(
+            ['seq', 'cardId', 'cardText', 'pack', 'adult', 'level', 'type', 'dealtAt', 'openerUid', 'closerUid']
+          );
+        }
+
+        // open stays open, or moves once to closed or passed. Only the closer closes.
+        function statusOk() {
+          let before = card().status;
+          let after = request.resource.data.status;
+          return after == before
+            || (before == 'open' && after == 'passed')
+            || (before == 'open' && after == 'closed' && request.auth.uid == card().closerUid);
+        }
+
+        allow read: if isMemberOf(roomId);
+        allow create: if isMemberOf(roomId)
+          && request.resource.data.openerUid == request.auth.uid
+          && request.resource.data.closerUid != request.auth.uid
+          && request.resource.data.answers.size() == 0
+          && request.resource.data.status in ['open', 'passed'];
+        allow update: if isMemberOf(roomId)
+          && fixedFieldsOk()
+          && statusOk()
+          && answersOk()
+          && ownFollowUpOk()
+          && partnerFollowUpOk();
+        allow delete: if false;
+
+        match /private/{uid} {
+          function parentCard() {
+            return get(/databases/$(database)/documents/rooms/$(roomId)/cards/$(seq)).data;
+          }
+
+          allow write: if isMemberOf(roomId) && uid == request.auth.uid;
+          allow read: if signedIn()
+            && (uid == request.auth.uid
+              || (isMemberOf(roomId)
+                && (parentCard().status != 'open' || roomData(roomId).settings.closerSeesOpener == true)));
+        }
+      }
+
+      match /customCards/{cardId} {
+        allow read, write: if isMemberOf(roomId);
+      }
+    }
+  }
+}

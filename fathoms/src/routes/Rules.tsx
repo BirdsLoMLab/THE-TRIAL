@@ -1,29 +1,36 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router'
 import { GameError, playersNeedingRules } from '../game/turns'
-import { useSameDevice } from '../store/sameDevice'
+import { useGame } from '../game-ui/context'
 import { clock } from '../store/clock'
 import { playerColor, playerName } from '../components/cardMeta'
 import { Button, Notice, PlayerDot, Screen } from '../components/ui'
 
 export function Rules() {
   const navigate = useNavigate()
-  const room = useSameDevice((s) => s.room)
-  const dispatch = useSameDevice((s) => s.dispatch)
+  const game = useGame()
+  const { room } = game
   const [error, setError] = useState<string | null>(null)
 
-  if (!room) return <Navigate to="/" replace />
   const waiting = playersNeedingRules(room)
-  const next = waiting[0]
-  if (next === undefined) return <Navigate to="/same-device/turn" replace />
+  const turnPath = `${game.basePath}/turn`
+  // One phone: players agree one after the other. Online: only I can agree for me.
+  const next =
+    game.mode === 'online' ? (waiting.includes(game.viewer) ? game.viewer : undefined) : waiting[0]
+  if (waiting.length === 0) return <Navigate to={turnPath} replace />
+  // Online, my own agreement is all this screen needs: the Turn screen waits for the partner.
+  if (game.mode === 'online' && !waiting.includes(game.viewer))
+    return <Navigate to={turnPath} replace />
 
-  function agree(uid: string) {
+  async function agree(uid: string) {
     setError(null)
     try {
-      dispatch({ type: 'agreeRules', by: uid, at: clock.now() })
-      if (waiting.length === 1) navigate('/same-device/turn', { replace: true })
+      await game.dispatch({ type: 'agreeRules', by: uid, at: clock.now() })
+      if (game.mode === 'online' || waiting.length === 1) navigate(turnPath, { replace: true })
     } catch (caught) {
-      setError(caught instanceof GameError ? caught.message : String(caught))
+      setError(
+        caught instanceof GameError || caught instanceof Error ? caught.message : String(caught),
+      )
     }
   }
 
@@ -62,9 +69,32 @@ export function Rules() {
       </ul>
       {error && <Notice tone="error">{error}</Notice>}
       <div className="mt-8">
-        <Button variant="primary" block onClick={() => agree(next)} data-testid="rules-agree">
-          {playerName(room, next)}, I agree
-        </Button>
+        {next ? (
+          <Button
+            variant="primary"
+            block
+            onClick={() => agree(next)}
+            disabled={game.busy}
+            data-testid="rules-agree"
+          >
+            {playerName(room, next)}, I agree
+          </Button>
+        ) : (
+          <Notice>
+            Waiting for {waiting.map((uid) => playerName(room, uid)).join(' and ')} to agree. You
+            can go on to your turn.
+          </Notice>
+        )}
+        {game.mode === 'online' && !next && (
+          <Button
+            block
+            className="mt-3"
+            onClick={() => navigate(turnPath)}
+            data-testid="rules-continue"
+          >
+            Continue
+          </Button>
+        )}
       </div>
     </Screen>
   )

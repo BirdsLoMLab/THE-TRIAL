@@ -2,38 +2,12 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { GameError } from '../game/turns'
 import { PLAYER_COLORS, useSameDevice } from '../store/sameDevice'
+import { ColorPicker } from '../components/ColorPicker'
 import { Button, Notice, Screen, SectionLabel, TextInput } from '../components/ui'
 
 interface Draft {
   name: string
   color: string
-}
-
-function ColorPicker({
-  value,
-  onChange,
-  label,
-}: {
-  readonly value: string
-  readonly onChange: (hex: string) => void
-  readonly label: string
-}) {
-  return (
-    <div role="radiogroup" aria-label={label} className="mt-2 flex flex-wrap gap-2">
-      {PLAYER_COLORS.map((color) => (
-        <button
-          key={color.id}
-          type="button"
-          role="radio"
-          aria-checked={value === color.hex}
-          aria-label={color.name}
-          onClick={() => onChange(color.hex)}
-          className={`h-11 w-11 rounded-full border-4 transition ${value === color.hex ? 'border-ink scale-105' : 'border-transparent'}`}
-          style={{ backgroundColor: color.hex }}
-        />
-      ))}
-    </div>
-  )
 }
 
 export function SameDeviceNew() {

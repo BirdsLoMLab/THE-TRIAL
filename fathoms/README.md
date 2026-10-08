@@ -4,11 +4,11 @@ Private two-player conversation game for two Android phones. React web app wrapp
 
 ## Status
 
-Phase 0 (scaffold) and Phase 1 (pure logic and Same Device mode) are built and verified.
+Phases 0 to 2 are built and verified.
 
-- `src/game` holds the deck builder and the turn reducer: pure functions, no React, Firebase, or Capacitor, 100 percent line coverage enforced by `pnpm test`, plus a property test for the strict alternation of the ball.
-- Same Device mode plays a whole deck on one phone: Home, setup, Rules, Turn (catch up, close, open, send, reveal, hand off), Current cards in the same flow, Journal, and the Phase 1 subset of Settings. The room lives in localStorage and survives a reload.
-- Two Phase 0 steps still need your accounts and phones: create the Firebase project (see Firebase below) and install the debug APK on both phones (see Android debug build). Online rooms, push, and reminders arrive in Phases 2 and 3.
+- Phase 1: `src/game` holds the deck builder and the turn reducer (pure, 100 percent line coverage enforced by `pnpm test`, a property test for the strict alternation of the ball) and Same Device mode plays a whole deck on one phone with the room in localStorage.
+- Phase 2: online rooms on Firestore. Anonymous sign in, create and join by invite link or code, the Turn, Waiting, Journal, and Settings screens wired through one transaction per action, a presence dot, and drafts kept per room and card on the device. Security rules live in `firestore.rules` with emulator tests for every negative case the plan names, and a Playwright spec plays ten cards between two browser contexts against the emulators.
+- Still yours to do: create the Firebase project and drop its config in (see Firebase below), and install the debug APK on both phones (see Android debug build). Push and reminders arrive in Phase 3.
 
 Dependency versions were checked against the npm registry on 2026-10-08. Re-check before upgrading.
 
@@ -30,23 +30,25 @@ pnpm dev                     # http://localhost:5173
 
 ## Commands
 
-| Command              | What it does                                                                      |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `pnpm dev`           | Dev server in the browser                                                         |
-| `pnpm build`         | Type check, validate content, build to `dist/`. Fails on invalid content          |
-| `pnpm preview`       | Serve the production build locally                                                |
-| `pnpm typecheck`     | TypeScript only                                                                   |
-| `pnpm test`          | Unit and component tests (Vitest)                                                 |
-| `pnpm test:watch`    | Same, in watch mode                                                               |
-| `pnpm test:coverage` | Same, with a coverage report in `coverage/`                                       |
-| `pnpm test:e2e`      | Playwright smoke test at 360 px against the dev server                            |
-| `pnpm lint`          | ESLint, Prettier check, and the em dash check                                     |
-| `pnpm format`        | Prettier write                                                                    |
-| `pnpm content:check` | Validate `content/` and print counts per pack and level                           |
-| `pnpm android:sync`  | Build the web app and copy it into `android/`                                     |
-| `pnpm android:debug` | `android:sync`, assemble a debug APK with the Gradle wrapper, install it over USB |
+| Command              | What it does                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `pnpm dev`           | Dev server in the browser                                                              |
+| `pnpm build`         | Type check, validate content, build to `dist/`. Fails on invalid content               |
+| `pnpm preview`       | Serve the production build locally                                                     |
+| `pnpm typecheck`     | TypeScript only                                                                        |
+| `pnpm test`          | Unit and component tests (Vitest)                                                      |
+| `pnpm test:watch`    | Same, in watch mode                                                                    |
+| `pnpm test:coverage` | Same, with a coverage report in `coverage/`                                            |
+| `pnpm test:e2e`      | Playwright at 360 px: Same Device full deck, two phone room against the emulators      |
+| `pnpm test:rules`    | Firestore rules tests and the room repository test against the emulators               |
+| `pnpm emulators`     | Start the Auth and Firestore emulators for `pnpm dev` with `VITE_FIREBASE_EMULATORS=1` |
+| `pnpm lint`          | ESLint, Prettier check, and the em dash check                                          |
+| `pnpm format`        | Prettier write                                                                         |
+| `pnpm content:check` | Validate `content/` and print counts per pack and level                                |
+| `pnpm android:sync`  | Build the web app and copy it into `android/`                                          |
+| `pnpm android:debug` | `android:sync`, assemble a debug APK with the Gradle wrapper, install it over USB      |
 
-Phase 2 adds `pnpm emulators` and `pnpm test:rules`. Phase 5 adds `pnpm android:release`.
+Phase 5 adds `pnpm android:release`.
 
 ## Content
 
@@ -107,7 +109,15 @@ Maven Central sometimes answers 429 (too many requests) when Gradle resolves eve
 
 ## Playwright
 
-`pnpm test:e2e` starts the dev server and runs Chromium with a 360 by 780 CSS pixel viewport. The first time on a machine, run `pnpm exec playwright install chromium`. To reuse an existing Chromium instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path.
+`pnpm test:e2e` starts the Auth and Firestore emulators, then the dev server with a demo Firebase config, and runs Chromium with a 360 by 780 CSS pixel viewport. The first time on a machine, run `pnpm exec playwright install chromium`. To reuse an existing Chromium instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path. `pnpm test:e2e:direct` skips the emulators (the online spec then fails).
+
+## Emulators
+
+The Firestore emulator needs a JDK (21 works) and downloads its jar on first use. `pnpm emulators` starts Auth and Firestore on 9099 and 8080 for a dev server started with `VITE_FIREBASE_EMULATORS=1` and any non empty `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID` (use `demo-fathoms`), and `VITE_FIREBASE_APP_ID`. `pnpm test:rules` and `pnpm test:e2e` start their own emulators.
+
+## Online rooms
+
+Home, then Create a room: one name and one color. Send the invite link (or the room code); the partner opens it, picks a name and a color, and both agree to the rules. The first card goes to the creator. Each action is one Firestore transaction that runs the same reducer as Same Device mode. Blind close is enforced by the data layout: an open card's opener answer lives in `cards/{seq}/private/{uid}`, readable by its author only until the card closes (or always, when Settings lets the closer see the opener). The closer writes only their own answer; the opener's client copies its private answer into the card once the card is closed, and the closer reads the private document directly for the reveal in the meantime. A room is readable by any signed in user while it still has one player, so the invite link works; after that only members can read it, and nobody can list rooms.
 
 ## Layout
 
@@ -117,13 +127,18 @@ fathoms/
   src/config/         app name and id
   src/content/        schema, loader
   src/game/           pure logic: types.ts, deck.ts (deck builder), turns.ts (turn reducer and turn view)
-  src/store/          zustand store for Same Device mode (localStorage) and the clock helper
-  src/components/     shared UI: buttons, inputs, card blocks, level chips
+  src/game-ui/        the game adapter context and the two providers (Same Device, online room)
+  src/store/          zustand stores: sameDevice (localStorage room), online (room id and drafts), clock
+  src/sync/           Firebase init, anonymous auth, document schemas, the room repository (transactions, listeners)
+  src/components/     shared UI: buttons, inputs, card blocks, level chips, color picker
   src/routes/         one file per screen, routes.ts is the hash route table
-  src/sync/           Firebase init (guarded until .env.local exists)
   scripts/            content check, dash check, Vite content plugin, Android debug build
-  tests/unit/         Vitest: game logic, store, screens, content
-  tests/e2e/          Playwright: home smoke test and a full deck on one phone
+  tests/unit/         Vitest: game logic, store, screens, content, sync model
+  tests/rules/        Firestore rules against the emulator
+  tests/emulator/     the room repository against the emulators
+  tests/e2e/          Playwright: home smoke test, a full deck on one phone, two phones in a room
+  firestore.rules     security rules (PLAN section 5)
+  firebase.json       emulator ports, hosting, rules path
   android/            Capacitor Android project (generated, committed)
 ```
 

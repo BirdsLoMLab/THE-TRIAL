@@ -21,7 +21,13 @@ export default defineConfig([
     },
   },
   {
-    files: ['scripts/**/*.ts', 'tests/e2e/**/*.ts', '*.config.ts'],
+    files: [
+      'scripts/**/*.ts',
+      'tests/e2e/**/*.ts',
+      'tests/rules/**/*.ts',
+      'tests/emulator/**/*.ts',
+      '*.config.ts',
+    ],
     languageOptions: {
       globals: globals.node,
     },

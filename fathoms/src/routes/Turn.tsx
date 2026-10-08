@@ -12,7 +12,9 @@ import {
   type TurnView,
 } from '../game/turns'
 import type { CardRecord, PlayerId, RoomState } from '../game/types'
-import { cardLookup, draftKey, nextDeckSize, useSameDevice } from '../store/sameDevice'
+import { useGame, type GameAdapter } from '../game-ui/context'
+import { timeAgo, useNow } from '../game-ui/useNow'
+import { cardLookup, draftKey, nextDeckSize } from '../store/sameDevice'
 import { clock } from '../store/clock'
 import { playerColor, playerName } from '../components/cardMeta'
 import { AnswerList, CardBlock } from '../components/cards'
@@ -27,24 +29,41 @@ import {
 } from '../components/ui'
 
 function errorText(caught: unknown): string {
-  return caught instanceof GameError ? caught.message : String(caught)
+  return caught instanceof GameError
+    ? caught.message
+    : caught instanceof Error
+      ? caught.message
+      : String(caught)
 }
 
-function NavRight() {
+function otherPlayer(room: RoomState, uid: PlayerId): PlayerId {
+  return room.order[0] === uid ? room.order[1] : room.order[0]
+}
+
+function NavRight({ game }: { readonly game: GameAdapter }) {
   return (
-    <nav className="flex gap-1" aria-label="More screens">
+    <nav className="flex items-center gap-1" aria-label="More screens">
+      {game.mode === 'online' && (
+        <span
+          aria-label={game.partnerOnline ? 'Partner online' : 'Partner offline'}
+          title={game.partnerOnline ? 'Partner online' : 'Partner offline'}
+          data-testid="presence-dot"
+          data-online={game.partnerOnline ? 'true' : 'false'}
+          className={`mr-1 inline-block h-2.5 w-2.5 rounded-full ${game.partnerOnline ? 'bg-level-1' : 'bg-edge'}`}
+        />
+      )}
       <LinkButton
-        to="/same-device/journal"
+        to={`${game.basePath}/journal`}
         variant="ghost"
-        className="px-3"
+        className="px-2 text-sm"
         data-testid="nav-journal"
       >
         Journal
       </LinkButton>
       <LinkButton
-        to="/same-device/settings"
+        to={`${game.basePath}/settings`}
         variant="ghost"
-        className="px-3"
+        className="px-2 text-sm"
         data-testid="nav-settings"
       >
         Settings
@@ -53,11 +72,11 @@ function NavRight() {
   )
 }
 
-function HandoffView({ room }: { readonly room: RoomState }) {
-  const acknowledge = useSameDevice((s) => s.acknowledgeHandoff)
+function HandoffView({ game }: { readonly game: GameAdapter }) {
+  const { room } = game
   const holder = room.ball.holderUid
   return (
-    <Screen title="Pass the phone" right={<NavRight />} testId="screen-handoff">
+    <Screen title="Pass the phone" right={<NavRight game={game} />} testId="screen-handoff">
       <div className="flex flex-1 flex-col items-center justify-center gap-6 py-10 text-center">
         <span
           aria-hidden="true"
@@ -69,34 +88,34 @@ function HandoffView({ room }: { readonly room: RoomState }) {
         </p>
         <p className="text-ink-muted">Answers stay hidden until both of you have written one.</p>
       </div>
-      <Button variant="primary" block onClick={acknowledge} data-testid="handoff-ack">
+      <Button variant="primary" block onClick={game.acknowledgeHandoff} data-testid="handoff-ack">
         I am {playerName(room, holder)}
       </Button>
     </Screen>
   )
 }
 
-function PausedView({ room }: { readonly room: RoomState }) {
-  const dispatch = useSameDevice((s) => s.dispatch)
+function PausedView({ game }: { readonly game: GameAdapter }) {
+  const { room } = game
   const [error, setError] = useState<string | null>(null)
   const paused = room.paused
   if (!paused) return null
-  function resume() {
+  async function resume() {
     try {
-      dispatch({ type: 'resume', by: room.ball.holderUid, at: clock.now() })
+      await game.dispatch({ type: 'resume', by: game.viewer, at: clock.now() })
     } catch (caught) {
       setError(errorText(caught))
     }
   }
   return (
-    <Screen title="Paused" right={<NavRight />} testId="screen-paused">
+    <Screen title="Paused" right={<NavRight game={game} />} testId="screen-paused">
       <div className="bg-surface border-edge rounded-3xl border p-5">
         <p className="text-xl font-medium">Paused by {playerName(room, paused.by)}</p>
         {paused.note && <p className="text-ink-muted mt-2 whitespace-pre-wrap">{paused.note}</p>}
       </div>
       {error && <Notice tone="error">{error}</Notice>}
       <div className="mt-8">
-        <Button variant="primary" block onClick={resume} data-testid="resume">
+        <Button variant="primary" block onClick={resume} disabled={game.busy} data-testid="resume">
           Resume
         </Button>
       </div>
@@ -105,24 +124,20 @@ function PausedView({ room }: { readonly room: RoomState }) {
 }
 
 function FollowUpBox({
-  room,
+  game,
   card,
   asker,
-  onDone,
 }: {
-  readonly room: RoomState
+  readonly game: GameAdapter
   readonly card: CardRecord
   readonly asker: PlayerId
-  readonly onDone?: (() => void) | undefined
 }) {
-  const dispatch = useSameDevice((s) => s.dispatch)
-  const drafts = useSameDevice((s) => s.drafts)
-  const setDraft = useSameDevice((s) => s.setDraft)
+  const { room } = game
   const [error, setError] = useState<string | null>(null)
   const key = draftKey.followUp(card.seq)
-  const text = drafts[key] ?? ''
+  const text = game.drafts[key] ?? ''
   const mine = card.followUps[asker]
-  const partner = room.order[0] === asker ? room.order[1] : room.order[0]
+  const partner = otherPlayer(room, asker)
 
   if (mine) {
     return (
@@ -143,12 +158,11 @@ function FollowUpBox({
   }
   if (card.status !== 'closed' || card.type !== 'question') return null
 
-  function ask() {
+  async function ask() {
     setError(null)
     try {
-      dispatch({ type: 'askFollowUp', by: asker, at: clock.now(), seq: card.seq, text })
-      setDraft(key, '')
-      onDone?.()
+      await game.dispatch({ type: 'askFollowUp', by: asker, at: clock.now(), seq: card.seq, text })
+      game.setDraft(key, '')
     } catch (caught) {
       setError(errorText(caught))
     }
@@ -172,13 +186,13 @@ function FollowUpBox({
         className="mt-1"
         value={text}
         placeholder={suggestion?.text ?? 'Your question'}
-        onChange={(e) => setDraft(key, e.target.value)}
+        onChange={(e) => game.setDraft(key, e.target.value)}
       />
       {error && <Notice tone="error">{error}</Notice>}
       <div className="mt-2 flex justify-end">
         <Button
           onClick={ask}
-          disabled={text.trim() === ''}
+          disabled={text.trim() === '' || game.busy}
           data-testid={`follow-up-ask-${card.seq}`}
         >
           Ask
@@ -188,28 +202,32 @@ function FollowUpBox({
   )
 }
 
-function RevealView({ room, seq }: { readonly room: RoomState; readonly seq: number }) {
-  const finish = useSameDevice((s) => s.finishReveal)
+function RevealView({ game, seq }: { readonly game: GameAdapter; readonly seq: number }) {
+  const { room } = game
   const card = cardBySeq(room, seq)
-  const sender = room.order[0] === room.ball.holderUid ? room.order[1] : room.order[0]
+  // The sender is the player who no longer holds the ball.
+  const sender = otherPlayer(room, room.ball.holderUid)
   if (!card) return null
+  const answers = visibleAnswers(room, card, sender)
+  const waitingForOpener = card.status === 'closed' && !answers[card.openerUid]
   return (
     <Screen title="Reveal" testId="screen-reveal">
       <CardBlock card={card} label="Both answers" animate="reveal" testId="reveal-card">
-        <AnswerList
-          room={room}
-          answers={visibleAnswers(room, card, sender)}
-          order={[card.openerUid, card.closerUid]}
-        />
+        <AnswerList room={room} answers={answers} order={[card.openerUid, card.closerUid]} />
+        {waitingForOpener && (
+          <p className="mt-2 text-sm opacity-80">
+            Fetching {playerName(room, card.openerUid)}&apos;s answer.
+          </p>
+        )}
         <div className="mt-4">
-          <FollowUpBox room={room} card={card} asker={sender} />
+          <FollowUpBox game={game} card={card} asker={sender} />
         </div>
       </CardBlock>
       <p className="text-ink-muted mt-4 text-sm">
         {playerName(room, room.ball.holderUid)} sees this at the start of their turn.
       </p>
       <div className="mt-8">
-        <Button variant="primary" block onClick={finish} data-testid="reveal-done">
+        <Button variant="primary" block onClick={game.finishReveal} data-testid="reveal-done">
           Done
         </Button>
       </div>
@@ -217,7 +235,8 @@ function RevealView({ room, seq }: { readonly room: RoomState; readonly seq: num
   )
 }
 
-function CatchUpBlock({ room, view }: { readonly room: RoomState; readonly view: TurnView }) {
+function CatchUpBlock({ game, view }: { readonly game: GameAdapter; readonly view: TurnView }) {
+  const { room } = game
   const catchUp = view.catchUp
   if (!catchUp) return null
   const { card } = catchUp
@@ -238,7 +257,7 @@ function CatchUpBlock({ room, view }: { readonly room: RoomState; readonly view:
       )}
       {!passed && (
         <div className="mt-4">
-          <FollowUpBox room={room} card={card} asker={view.holder} />
+          <FollowUpBox game={game} card={card} asker={view.holder} />
         </div>
       )}
     </CardBlock>
@@ -246,16 +265,15 @@ function CatchUpBlock({ room, view }: { readonly room: RoomState; readonly view:
 }
 
 function PendingFollowUpBlock({
-  room,
+  game,
   pending,
   view,
 }: {
-  readonly room: RoomState
+  readonly game: GameAdapter
   readonly pending: PendingFollowUp
   readonly view: TurnView
 }) {
-  const drafts = useSameDevice((s) => s.drafts)
-  const setDraft = useSameDevice((s) => s.setDraft)
+  const { room } = game
   const key = draftKey.reply(pending.card.seq)
   const own = pending.card.answers[view.holder]
   return (
@@ -278,25 +296,25 @@ function PendingFollowUpBlock({
         data-testid={`reply-${pending.card.seq}`}
         rows={2}
         className="mt-3"
-        value={drafts[key] ?? ''}
+        value={game.drafts[key] ?? ''}
         placeholder="Reply, or leave it"
-        onChange={(e) => setDraft(key, e.target.value)}
+        onChange={(e) => game.setDraft(key, e.target.value)}
       />
     </section>
   )
 }
 
-function OverflowMenu({ room, view }: { readonly room: RoomState; readonly view: TurnView }) {
-  const dispatch = useSameDevice((s) => s.dispatch)
+function OverflowMenu({ game, view }: { readonly game: GameAdapter; readonly view: TurnView }) {
+  const { room } = game
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pauseNote, setPauseNote] = useState('')
   const [pausing, setPausing] = useState(false)
 
-  function run(label: string, action: Parameters<typeof dispatch>[0]) {
+  async function run(label: string, action: Parameters<GameAdapter['dispatch']>[0]) {
     setError(null)
     try {
-      dispatch(action)
+      await game.dispatch(action)
       setOpen(false)
     } catch (caught) {
       setError(`${label}: ${errorText(caught)}`)
@@ -398,24 +416,24 @@ function OverflowMenu({ room, view }: { readonly room: RoomState; readonly view:
   )
 }
 
-function ExhaustedView({ room, view }: { readonly room: RoomState; readonly view: TurnView }) {
-  const rebuild = useSameDevice((s) => s.rebuildDeck)
+function ExhaustedView({ game, view }: { readonly game: GameAdapter; readonly view: TurnView }) {
+  const { room } = game
   const [error, setError] = useState<string | null>(null)
   const closers = getContent().shared.closers
   const closer = closers[hashSeed(room.deck.seed) % closers.length]
   // The ball passed at ball.since, close enough to now for a count that only informs.
   const size = nextDeckSize(room, room.ball.since)
-  function newDeck() {
+  async function newDeck() {
     setError(null)
     try {
-      rebuild(view.holder)
+      await game.rebuildDeck()
     } catch (caught) {
       setError(errorText(caught))
     }
   }
   return (
-    <Screen title="Deck finished" right={<NavRight />} testId="screen-exhausted">
-      <CatchUpBlock room={room} view={view} />
+    <Screen title="Deck finished" right={<NavRight game={game} />} testId="screen-exhausted">
+      <CatchUpBlock game={game} view={view} />
       <section className="bg-surface border-edge mt-4 rounded-3xl border p-5">
         <SectionLabel>Before you go</SectionLabel>
         <p className="text-xl leading-snug font-medium" data-testid="closer-text">
@@ -437,15 +455,15 @@ function ExhaustedView({ room, view }: { readonly room: RoomState; readonly view
           variant="primary"
           block
           onClick={newDeck}
-          disabled={size === 0}
+          disabled={size === 0 || game.busy}
           data-testid="new-deck"
         >
           {size > 0 ? `New deck (${size} cards)` : 'New deck'}
         </Button>
-        <LinkButton to="/same-device/settings" block data-testid="exhausted-settings">
+        <LinkButton to={`${game.basePath}/settings`} block data-testid="exhausted-settings">
           Settings
         </LinkButton>
-        <LinkButton to="/same-device/journal" variant="ghost" block>
+        <LinkButton to={`${game.basePath}/journal`} variant="ghost" block>
           Read the journal
         </LinkButton>
       </div>
@@ -453,26 +471,90 @@ function ExhaustedView({ room, view }: { readonly room: RoomState; readonly view
   )
 }
 
-function TurnStack({ room, view }: { readonly room: RoomState; readonly view: TurnView }) {
-  const drafts = useSameDevice((s) => s.drafts)
-  const setDraft = useSameDevice((s) => s.setDraft)
-  const sendTurn = useSameDevice((s) => s.sendTurn)
+/** Online only: the other player holds the ball. */
+function WaitingView({ game }: { readonly game: GameAdapter }) {
+  const { room, viewer } = game
+  const now = useNow()
+  const holder = room.ball.holderUid
+  const open = room.openSeq > 0 ? cardBySeq(room, room.openSeq) : undefined
+  const recent = room.cards
+    .filter((card) => card.status !== 'open')
+    .slice(-3)
+    .reverse()
+  return (
+    <Screen title="Waiting" right={<NavRight game={game} />} testId="screen-waiting">
+      <p className="text-base" data-testid="waiting-holder">
+        <PlayerDot color={playerColor(room, holder)} name={`${playerName(room, holder)}'s turn`} />
+        <span className="text-ink-muted text-sm">
+          {' '}
+          {'·'} since {timeAgo(room.ball.since, now)}
+        </span>
+      </p>
+      {open ? (
+        <div className="mt-4">
+          <CardBlock
+            card={open}
+            label={`${playerName(room, holder)} is closing this`}
+            testId="waiting-card"
+          >
+            <AnswerList
+              room={room}
+              answers={visibleAnswers(room, open, viewer)}
+              order={[open.openerUid, open.closerUid]}
+            />
+          </CardBlock>
+        </div>
+      ) : (
+        <Notice>{playerName(room, holder)} opens the next card.</Notice>
+      )}
+      <div className="mt-4">
+        <Button block disabled data-testid="nudge">
+          Nudge now
+        </Button>
+        <p className="text-ink-muted mt-1 text-center text-xs">
+          Nudges and turn alerts arrive with notifications in Phase 3.
+        </p>
+      </div>
+      {recent.length > 0 && (
+        <section className="mt-8">
+          <SectionLabel>Latest in the journal</SectionLabel>
+          <ul className="flex flex-col gap-3">
+            {recent.map((card) => (
+              <li key={card.seq}>
+                <CardBlock card={card} testId={`waiting-recent-${card.seq}`}>
+                  <AnswerList
+                    room={room}
+                    answers={visibleAnswers(room, card, viewer)}
+                    order={[card.openerUid, card.closerUid]}
+                  />
+                </CardBlock>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </Screen>
+  )
+}
+
+function TurnStack({ game, view }: { readonly game: GameAdapter; readonly view: TurnView }) {
+  const { room } = game
   const [error, setError] = useState<string | null>(null)
   const closeKey = view.close ? draftKey.close(view.close.card.seq) : null
   const openKey = view.open ? draftKey.open(view.open.seq) : null
-  const closeText = closeKey ? (drafts[closeKey] ?? '') : ''
-  const openText = openKey ? (drafts[openKey] ?? '') : ''
+  const closeText = closeKey ? (game.drafts[closeKey] ?? '') : ''
+  const openText = openKey ? (game.drafts[openKey] ?? '') : ''
   const ready = (!view.close || closeText.trim() !== '') && (!view.open || openText.trim() !== '')
   const stepsLeft = (view.close ? 1 : 0) + (view.open ? 1 : 0)
 
-  function send() {
+  async function send() {
     setError(null)
     const replies = view.pendingFollowUps.flatMap((p) => {
-      const text = drafts[draftKey.reply(p.card.seq)]?.trim() ?? ''
+      const text = game.drafts[draftKey.reply(p.card.seq)]?.trim() ?? ''
       return text ? [{ seq: p.card.seq, text }] : []
     })
     try {
-      sendTurn({
+      await game.sendTurn({
         close: view.close ? closeText : undefined,
         open: view.open ? openText : undefined,
         replies,
@@ -487,21 +569,27 @@ function TurnStack({ room, view }: { readonly room: RoomState; readonly view: Tu
       title={`Turn ${view.turn + 1}`}
       right={
         <div className="flex items-center gap-1">
-          <NavRight />
-          <OverflowMenu room={room} view={view} />
+          <NavRight game={game} />
+          <OverflowMenu game={game} view={view} />
         </div>
       }
       testId="screen-turn"
     >
-      <p className="text-ink-muted -mt-3 mb-4 text-sm" data-testid="turn-holder">
-        <PlayerDot color={playerColor(room, view.holder)} name={playerName(room, view.holder)} />{' '}
-        Turn {view.turn + 1}
-        {view.lighter && room.cards.length < view.lighter.until ? ', going lighter' : ''}
+      <p className="-mt-3 mb-4 text-base" data-testid="turn-holder">
+        <PlayerDot
+          color={playerColor(room, view.holder)}
+          name={`${playerName(room, view.holder)}'s turn`}
+        />
+        <span className="text-ink-muted text-sm">
+          {' '}
+          {'·'} Turn {view.turn + 1}
+          {view.lighter && room.cards.length < view.lighter.until ? ', going lighter' : ''}
+        </span>
       </p>
       <div className="flex flex-col gap-4">
-        <CatchUpBlock room={room} view={view} />
+        <CatchUpBlock game={game} view={view} />
         {view.pendingFollowUps.map((pending) => (
-          <PendingFollowUpBlock key={pending.card.seq} room={room} pending={pending} view={view} />
+          <PendingFollowUpBlock key={pending.card.seq} game={game} pending={pending} view={view} />
         ))}
         {view.close && closeKey && (
           <CardBlock
@@ -532,7 +620,7 @@ function TurnStack({ room, view }: { readonly room: RoomState; readonly view: Tu
                     ? 'Your answer, written blind'
                     : 'Your answer'
               }
-              onChange={(e) => setDraft(closeKey, e.target.value)}
+              onChange={(e) => game.setDraft(closeKey, e.target.value)}
             />
           </CardBlock>
         )}
@@ -556,7 +644,7 @@ function TurnStack({ room, view }: { readonly room: RoomState; readonly view: Tu
                   ? 'One line about what you did'
                   : 'Your answer, written blind'
               }
-              onChange={(e) => setDraft(openKey, e.target.value)}
+              onChange={(e) => game.setDraft(openKey, e.target.value)}
             />
           </CardBlock>
         )}
@@ -566,11 +654,11 @@ function TurnStack({ room, view }: { readonly room: RoomState; readonly view: Tu
         <Button
           variant="primary"
           block
-          disabled={!ready || !view.canSend}
+          disabled={!ready || !view.canSend || game.busy}
           onClick={send}
           data-testid="send"
         >
-          {stepsLeft === 0 ? 'Nothing to send' : 'Send turn'}
+          {game.busy ? 'Sending' : stepsLeft === 0 ? 'Nothing to send' : 'Send turn'}
         </Button>
         <p className="text-ink-muted mt-2 text-center text-xs">
           Drafts are saved on this phone until you send.
@@ -581,17 +669,19 @@ function TurnStack({ room, view }: { readonly room: RoomState; readonly view: Tu
 }
 
 export function Turn() {
-  const room = useSameDevice((s) => s.room)
-  const handoff = useSameDevice((s) => s.handoff)
-  const reveal = useSameDevice((s) => s.reveal)
-  const view = useMemo(() => (room ? turnView(room, cardLookup()) : null), [room])
-
-  if (!room || !view) return <Navigate to="/" replace />
+  const game = useGame()
+  const { room } = game
+  const view = useMemo(() => turnView(room, cardLookup()), [room])
   const phase = roomPhase(room)
-  if (phase === 'paused') return <PausedView room={room} />
-  if (reveal !== null) return <RevealView room={room} seq={reveal} />
-  if (handoff) return <HandoffView room={room} />
-  if (phase === 'rules') return <Navigate to="/same-device/rules" replace />
-  if (phase === 'exhausted') return <ExhaustedView room={room} view={view} />
-  return <TurnStack room={room} view={view} />
+  if (phase === 'paused') return <PausedView game={game} />
+  if (game.reveal !== null) return <RevealView game={game} seq={game.reveal} />
+  if (game.handoff) return <HandoffView game={game} />
+  if (game.mode === 'online' && game.viewer !== room.ball.holderUid) {
+    if (game.room.players[game.viewer]?.rulesAgreedAt === null)
+      return <Navigate to={`${game.basePath}/rules`} replace />
+    return <WaitingView game={game} />
+  }
+  if (phase === 'rules') return <Navigate to={`${game.basePath}/rules`} replace />
+  if (phase === 'exhausted') return <ExhaustedView game={game} view={view} />
+  return <TurnStack game={game} view={view} />
 }

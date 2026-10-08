@@ -417,6 +417,23 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
 
 // Room creation
 
+/** A fresh player record. Validates the name and color. */
+export function newPlayer(input: Omit<NewPlayer, 'uid'>, joinedAt: number): Player {
+  return {
+    name: cleanName(input.name),
+    color: cleanColor(input.color),
+    joinedAt,
+    lastSeen: null,
+    fcmTokens: [],
+    quietHours: null,
+    excludeTags: [],
+    afterDarkEnabled: false,
+    afterDarkConfirmedAt: null,
+    lastTurnAt: null,
+    rulesAgreedAt: null,
+  }
+}
+
 export function createRoom(input: CreateRoomInput): RoomState {
   const { players, createdAt, settings } = input
   if (players.length !== 2) fail('invalid-room', 'a room has exactly two players')
@@ -431,16 +448,7 @@ export function createRoom(input: CreateRoomInput): RoomState {
   const playerRecords: Record<PlayerId, Player> = {}
   const passes: Record<PlayerId, number> = {}
   for (const player of [first, second]) {
-    playerRecords[player.uid] = {
-      name: cleanName(player.name),
-      color: cleanColor(player.color),
-      joinedAt: createdAt,
-      excludeTags: [],
-      afterDarkEnabled: false,
-      afterDarkConfirmedAt: null,
-      lastTurnAt: null,
-      rulesAgreedAt: null,
-    }
+    playerRecords[player.uid] = newPlayer(player, createdAt)
     passes[player.uid] = settings.passesPerDeck
   }
 

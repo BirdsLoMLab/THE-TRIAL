@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { Navigate, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { getContent } from '../content'
 import { countCards } from '../content/schema'
 import { GameError, roomPhase } from '../game/turns'
 import type { LevelId, PlayerId, Progression, RoomSettings } from '../game/types'
-import { PLAYER_COLORS, useSameDevice } from '../store/sameDevice'
+import { useGame } from '../game-ui/context'
 import { clock } from '../store/clock'
-import { Button, Notice, Screen, SectionLabel, TextInput } from '../components/ui'
+import { ColorPicker } from '../components/ColorPicker'
+import { Button, Notice, PlayerDot, Screen, SectionLabel, TextInput } from '../components/ui'
 
 const DECK_FIELDS: readonly (keyof RoomSettings)[] = [
   'packs',
@@ -27,7 +28,7 @@ interface DeckDraft {
 }
 
 function errorText(caught: unknown): string {
-  return caught instanceof GameError ? caught.message : String(caught)
+  return caught instanceof GameError || caught instanceof Error ? caught.message : String(caught)
 }
 
 function Toggle({
@@ -61,17 +62,16 @@ function Toggle({
 }
 
 function PlayerEditor({ uid }: { readonly uid: PlayerId }) {
-  const room = useSameDevice((s) => s.room)
-  const dispatch = useSameDevice((s) => s.dispatch)
-  const player = room?.players[uid]
+  const game = useGame()
+  const player = game.room.players[uid]
   const [name, setName] = useState(player?.name ?? '')
   const [error, setError] = useState<string | null>(null)
   if (!player) return null
 
-  function save(patch: { name?: string; color?: string }) {
+  async function save(patch: { name?: string; color?: string }) {
     setError(null)
     try {
-      dispatch({ type: 'updatePlayer', by: uid, at: clock.now(), patch })
+      await game.dispatch({ type: 'updatePlayer', by: uid, at: clock.now(), patch })
     } catch (caught) {
       setError(errorText(caught))
     }
@@ -88,28 +88,16 @@ function PlayerEditor({ uid }: { readonly uid: PlayerId }) {
           maxLength={40}
           onChange={(e) => setName(e.target.value)}
           onBlur={() => {
-            if (name.trim() && name.trim() !== player.name) save({ name })
+            if (name.trim() && name.trim() !== player.name) void save({ name })
           }}
         />
       </label>
-      <div
-        role="radiogroup"
-        aria-label={`Color of ${player.name}`}
-        className="mt-3 flex flex-wrap gap-2"
-      >
-        {PLAYER_COLORS.map((color) => (
-          <button
-            key={color.id}
-            type="button"
-            role="radio"
-            aria-checked={player.color === color.hex}
-            aria-label={color.name}
-            onClick={() => save({ color: color.hex })}
-            className={`h-10 w-10 rounded-full border-4 ${player.color === color.hex ? 'border-ink' : 'border-transparent'}`}
-            style={{ backgroundColor: color.hex }}
-          />
-        ))}
-      </div>
+      <ColorPicker
+        label={`Color of ${player.name}`}
+        value={player.color}
+        onChange={(color) => void save({ color })}
+        size="md"
+      />
       {error && <Notice tone="error">{error}</Notice>}
     </div>
   )
@@ -117,48 +105,45 @@ function PlayerEditor({ uid }: { readonly uid: PlayerId }) {
 
 export function Settings() {
   const navigate = useNavigate()
-  const room = useSameDevice((s) => s.room)
-  const dispatch = useSameDevice((s) => s.dispatch)
-  const rebuild = useSameDevice((s) => s.rebuildDeck)
-  const endGame = useSameDevice((s) => s.endGame)
+  const game = useGame()
+  const { room } = game
   const content = getContent()
   const counts = countCards(content)
-  const [draft, setDraft] = useState<DeckDraft | null>(() =>
-    room
-      ? {
-          packs: [...room.settings.packs],
-          startLevel: room.settings.startLevel,
-          progression: room.settings.progression,
-          currentEvery: room.settings.currentEvery,
-          excludeAnswered: room.settings.excludeAnswered,
-          passesPerDeck: room.settings.passesPerDeck,
-          closerSeesOpener: room.settings.closerSeesOpener,
-        }
-      : null,
-  )
+  const [draft, setDraft] = useState<DeckDraft>(() => ({
+    packs: [...room.settings.packs],
+    startLevel: room.settings.startLevel,
+    progression: room.settings.progression,
+    currentEvery: room.settings.currentEvery,
+    excludeAnswered: room.settings.excludeAnswered,
+    passesPerDeck: room.settings.passesPerDeck,
+    closerSeesOpener: room.settings.closerSeesOpener,
+  }))
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [confirmEnd, setConfirmEnd] = useState(false)
   const [pauseNote, setPauseNote] = useState('')
-
-  if (!room || !draft) return <Navigate to="/" replace />
+  const [copied, setCopied] = useState(false)
 
   const deckChanged = DECK_FIELDS.some((field) => {
     const current = room.settings[field]
     const next = draft[field as keyof DeckDraft]
     return next !== undefined && JSON.stringify(current) !== JSON.stringify(next)
   })
+  const actor = game.mode === 'online' ? game.viewer : room.ball.holderUid
 
-  function save() {
-    if (!room || !draft) return
+  async function save() {
     setError(null)
     setSaved(false)
     try {
-      const by = room.ball.holderUid
-      dispatch({ type: 'updateSettings', by, at: clock.now(), patch: { ...draft } })
+      await game.dispatch({
+        type: 'updateSettings',
+        by: actor,
+        at: clock.now(),
+        patch: { ...draft },
+      })
       if (deckChanged) {
-        rebuild(by)
-        navigate('/same-device/rules')
+        await game.rebuildDeck()
+        navigate(`${game.basePath}/rules`)
         return
       }
       setSaved(true)
@@ -167,27 +152,78 @@ export function Settings() {
     }
   }
 
+  async function run(action: Parameters<typeof game.dispatch>[0]) {
+    setError(null)
+    try {
+      await game.dispatch(action)
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
   function togglePack(id: string, on: boolean) {
-    setDraft((d) =>
-      d
-        ? { ...d, packs: on ? [...new Set([...d.packs, id])] : d.packs.filter((p) => p !== id) }
-        : d,
-    )
+    setDraft((d) => ({
+      ...d,
+      packs: on ? [...new Set([...d.packs, id])] : d.packs.filter((p) => p !== id),
+    }))
+  }
+
+  async function copyInvite() {
+    if (!game.inviteUrl) return
+    try {
+      await navigator.clipboard.writeText(game.inviteUrl)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
   }
 
   const phase = roomPhase(room)
 
   return (
-    <Screen title="Settings" back="/same-device/turn" testId="screen-settings">
+    <Screen title="Settings" back={`${game.basePath}/turn`} testId="screen-settings">
       <div className="flex flex-col gap-8">
         <section>
           <SectionLabel>Players</SectionLabel>
           <div className="flex flex-col gap-3">
-            {room.order.map((uid) => (
-              <PlayerEditor key={uid} uid={uid} />
-            ))}
+            {room.order.map((uid) =>
+              game.mode === 'online' && uid !== game.viewer ? (
+                <div
+                  key={uid}
+                  className="bg-surface border-edge rounded-3xl border p-4"
+                  data-testid={`settings-partner-${uid}`}
+                >
+                  <PlayerDot
+                    color={room.players[uid]?.color ?? '#9fb0c3'}
+                    name={room.players[uid]?.name ?? uid}
+                  />
+                  <p className="text-ink-muted mt-1 text-xs">
+                    Your partner edits their own name and color.
+                  </p>
+                </div>
+              ) : (
+                <PlayerEditor key={uid} uid={uid} />
+              ),
+            )}
           </div>
         </section>
+
+        {game.mode === 'online' && game.inviteUrl && (
+          <section>
+            <SectionLabel>Room</SectionLabel>
+            <div className="bg-surface border-edge rounded-3xl border p-4">
+              <p className="text-ink-muted text-xs font-semibold tracking-widest uppercase">
+                Room code
+              </p>
+              <p className="mt-1 font-mono text-sm break-all" data-testid="settings-room-code">
+                {game.roomId}
+              </p>
+              <Button className="mt-3" onClick={copyInvite} data-testid="settings-copy-invite">
+                {copied ? 'Copied' : 'Copy invite link'}
+              </Button>
+            </div>
+          </section>
+        )}
 
         <section>
           <SectionLabel>Packs</SectionLabel>
@@ -324,7 +360,13 @@ export function Settings() {
           {error && <Notice tone="error">{error}</Notice>}
           {saved && <Notice>Saved.</Notice>}
           <div className="mt-3">
-            <Button variant="primary" block onClick={save} data-testid="settings-save">
+            <Button
+              variant="primary"
+              block
+              onClick={save}
+              disabled={game.busy}
+              data-testid="settings-save"
+            >
               {deckChanged ? 'Save and rebuild the deck' : 'Save'}
             </Button>
           </div>
@@ -336,9 +378,7 @@ export function Settings() {
             {phase === 'paused' ? (
               <Button
                 block
-                onClick={() =>
-                  dispatch({ type: 'resume', by: room.ball.holderUid, at: clock.now() })
-                }
+                onClick={() => run({ type: 'resume', by: actor, at: clock.now() })}
                 data-testid="settings-resume"
               >
                 Resume
@@ -354,12 +394,7 @@ export function Settings() {
                 <Button
                   block
                   onClick={() =>
-                    dispatch({
-                      type: 'pause',
-                      by: room.ball.holderUid,
-                      at: clock.now(),
-                      note: pauseNote,
-                    })
+                    run({ type: 'pause', by: actor, at: clock.now(), note: pauseNote })
                   }
                   data-testid="settings-pause"
                 >
@@ -369,17 +404,21 @@ export function Settings() {
             )}
             {confirmEnd ? (
               <div className="flex flex-col gap-2">
-                <p className="text-sm">This deletes the journal on this phone. There is no undo.</p>
+                <p className="text-sm">
+                  {game.mode === 'online'
+                    ? 'This forgets the room on this phone. The room itself stays; open the invite link to come back.'
+                    : 'This deletes the journal on this phone. There is no undo.'}
+                </p>
                 <Button
                   variant="danger"
                   block
-                  onClick={() => {
-                    endGame()
+                  onClick={async () => {
+                    await game.endGame()
                     navigate('/')
                   }}
                   data-testid="settings-end-confirm"
                 >
-                  Yes, end it
+                  {game.mode === 'online' ? 'Yes, forget it' : 'Yes, end it'}
                 </Button>
                 <Button variant="ghost" block onClick={() => setConfirmEnd(false)}>
                   Keep playing
@@ -392,15 +431,15 @@ export function Settings() {
                 onClick={() => setConfirmEnd(true)}
                 data-testid="settings-end"
               >
-                End this game
+                {game.mode === 'online' ? 'Leave this room on this phone' : 'End this game'}
               </Button>
             )}
           </div>
         </section>
 
         <footer className="text-ink-muted text-xs">
-          Content version {content.shared.version}. Reminder hours, quiet hours, After Dark, and the
-          Samsung battery guide arrive with the online rooms.
+          Content version {content.shared.version}. Reminder hours, quiet hours, After Dark, Delete
+          room, and the Samsung battery guide arrive in later phases.
         </footer>
       </div>
     </Screen>

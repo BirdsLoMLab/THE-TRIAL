@@ -28,5 +28,13 @@ export default defineConfig({
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    // A demo project against the local emulators. pnpm test:e2e starts them.
+    env: {
+      VITE_FIREBASE_API_KEY: 'demo-key',
+      VITE_FIREBASE_AUTH_DOMAIN: 'localhost',
+      VITE_FIREBASE_PROJECT_ID: 'demo-fathoms',
+      VITE_FIREBASE_APP_ID: 'demo-app',
+      VITE_FIREBASE_EMULATORS: '1',
+    },
   },
 })

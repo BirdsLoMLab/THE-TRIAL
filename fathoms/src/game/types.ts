@@ -75,10 +75,21 @@ export interface DeckPlayer {
   readonly excludeTags: readonly string[]
 }
 
+export interface QuietHours {
+  readonly start: string
+  readonly end: string
+  readonly tz: string
+}
+
 export interface Player extends DeckPlayer {
   readonly name: string
   readonly color: string
   readonly joinedAt: number
+  /** Presence heartbeat. Null until the player has been seen online. */
+  readonly lastSeen: number | null
+  /** Push tokens for this player's devices (Phase 3). */
+  readonly fcmTokens: readonly string[]
+  readonly quietHours: QuietHours | null
   readonly afterDarkConfirmedAt: number | null
   /** When this player last sent a turn. Drives catch up and pending follow-ups. */
   readonly lastTurnAt: number | null
