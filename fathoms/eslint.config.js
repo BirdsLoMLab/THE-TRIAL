@@ -7,7 +7,15 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig([
-  globalIgnores(['dist', 'android', 'coverage', '.vitest', 'test-results', 'playwright-report']),
+  globalIgnores([
+    'dist',
+    'android',
+    'coverage',
+    '.vitest',
+    'test-results',
+    'playwright-report',
+    'functions/lib',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

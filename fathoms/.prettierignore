@@ -10,3 +10,4 @@ pnpm-lock.yaml
 PLAN.md
 CLAUDE.md
 firestore.rules
+functions/lib/

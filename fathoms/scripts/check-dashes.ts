@@ -13,6 +13,7 @@ const SKIP_DIRS = new Set([
   'test-results',
   'playwright-report',
   '.git',
+  'lib',
 ])
 const EXTENSIONS = new Set([
   '.md',

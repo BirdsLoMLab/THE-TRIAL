@@ -14,6 +14,7 @@ import type {
   Player,
   PlayerId,
   PoolCard,
+  QuietHours,
   RoomSettings,
   RoomState,
 } from './types'
@@ -43,6 +44,8 @@ export type GameErrorCode =
   | 'invalid-player'
   | 'invalid-room'
   | 'invalid-deck'
+  | 'own-turn'
+  | 'nudge-too-soon'
 
 /** Thrown for any action the rules do not allow. The UI shows `message`; Firestore transactions abort. */
 export class GameError extends Error {
@@ -60,7 +63,10 @@ function fail(code: GameErrorCode, message: string): never {
 }
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
+const TIME_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
 const MAX_NAME_LENGTH = 40
+/** One nudge per this many milliseconds (PLAN 6.5: one extra push, limited to one per 10 hours). */
+export const NUDGE_INTERVAL_MS = 10 * 60 * 60 * 1000
 const LEVEL_IDS: readonly number[] = [1, 2, 3]
 
 export interface NewPlayer {
@@ -137,8 +143,13 @@ export type Action =
       readonly type: 'updatePlayer'
       readonly by: PlayerId
       readonly at: number
-      readonly patch: { readonly name?: string | undefined; readonly color?: string | undefined }
+      readonly patch: {
+        readonly name?: string | undefined
+        readonly color?: string | undefined
+        readonly quietHours?: QuietHours | null | undefined
+      }
     }
+  | { readonly type: 'nudge'; readonly by: PlayerId; readonly at: number }
 
 export interface CatchUp {
   /** The card the holder opened last turn, now closed or passed by the partner. */
@@ -246,6 +257,20 @@ function cleanColor(color: unknown): string {
   if (typeof color !== 'string' || !HEX_COLOR.test(color))
     fail('invalid-player', 'a color is a 6 digit hex value')
   return color
+}
+
+function cleanQuietHours(quiet: unknown): QuietHours | null {
+  if (quiet === null) return null
+  const ok =
+    typeof quiet === 'object' &&
+    quiet !== null &&
+    TIME_HHMM.test(String((quiet as QuietHours).start)) &&
+    TIME_HHMM.test(String((quiet as QuietHours).end)) &&
+    typeof (quiet as QuietHours).tz === 'string' &&
+    (quiet as QuietHours).tz.length > 0
+  if (!ok) fail('invalid-player', 'quiet hours need a start and end as HH:MM and a time zone')
+  const { start, end, tz } = quiet as QuietHours
+  return { start, end, tz }
 }
 
 function cleanText(text: string | undefined, code: GameErrorCode): string {
@@ -466,6 +491,7 @@ export function createRoom(input: CreateRoomInput): RoomState {
     passes,
     lighter: null,
     paused: null,
+    nudge: null,
     passedCards: {},
     cards: [],
   }
@@ -721,11 +747,23 @@ function updatePlayer(
   action: Extract<Action, { type: 'updatePlayer' }>,
 ): RoomState {
   requirePlayer(state, action.by)
-  const { name, color } = action.patch
+  const { name, color, quietHours } = action.patch
   return patchPlayer(state, action.by, {
     ...(name !== undefined ? { name: cleanName(name) } : {}),
     ...(color !== undefined ? { color: cleanColor(color) } : {}),
+    ...(quietHours !== undefined ? { quietHours: cleanQuietHours(quietHours) } : {}),
   })
+}
+
+/** The waiting player pokes the holder. The push itself is sent by the onBallPass function. */
+function nudge(state: RoomState, action: Extract<Action, { type: 'nudge' }>): RoomState {
+  requirePlayer(state, action.by)
+  if (state.paused) fail('paused', 'the room is paused')
+  if (state.ball.holderUid === action.by) fail('own-turn', 'it is your turn, nothing to nudge')
+  if (state.nudge && action.at - state.nudge.at < NUDGE_INTERVAL_MS) {
+    fail('nudge-too-soon', 'one nudge every 10 hours')
+  }
+  return { ...state, nudge: { by: action.by, at: action.at } }
 }
 
 function apply(state: RoomState, action: Action, lookup: CardLookup): RoomState {
@@ -752,6 +790,8 @@ function apply(state: RoomState, action: Action, lookup: CardLookup): RoomState 
       return updateSettings(state, action)
     case 'updatePlayer':
       return updatePlayer(state, action)
+    case 'nudge':
+      return nudge(state, action)
     default:
       return fail('unknown-action', `unknown action ${String((action as { type?: unknown }).type)}`)
   }

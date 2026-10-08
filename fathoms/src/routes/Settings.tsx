@@ -6,8 +6,17 @@ import { GameError, roomPhase } from '../game/turns'
 import type { LevelId, PlayerId, Progression, RoomSettings } from '../game/types'
 import { useGame } from '../game-ui/context'
 import { clock } from '../store/clock'
+import { useOnline } from '../store/online'
 import { ColorPicker } from '../components/ColorPicker'
-import { Button, Notice, PlayerDot, Screen, SectionLabel, TextInput } from '../components/ui'
+import {
+  Button,
+  LinkButton,
+  Notice,
+  PlayerDot,
+  Screen,
+  SectionLabel,
+  TextInput,
+} from '../components/ui'
 
 const DECK_FIELDS: readonly (keyof RoomSettings)[] = [
   'packs',
@@ -100,6 +109,168 @@ function PlayerEditor({ uid }: { readonly uid: PlayerId }) {
       />
       {error && <Notice tone="error">{error}</Notice>}
     </div>
+  )
+}
+
+function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+/** Phase 3: reminder hours, cap, quiet hours, push status, and the Samsung battery guide. Online rooms only. */
+function RemindersSection() {
+  const game = useGame()
+  const { room, viewer } = game
+  const me = room.players[viewer]
+  const pushState = useOnline((s) => s.pushState)
+  const enablePush = useOnline((s) => s.enablePush)
+  const [hours, setHours] = useState(String(room.settings.reminderHours))
+  const [cap, setCap] = useState(
+    room.settings.reminderCap === null ? '' : String(room.settings.reminderCap),
+  )
+  const [quietOn, setQuietOn] = useState(me?.quietHours !== null && me?.quietHours !== undefined)
+  const [start, setStart] = useState(me?.quietHours?.start ?? '22:00')
+  const [end, setEnd] = useState(me?.quietHours?.end ?? '08:00')
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  async function save() {
+    setError(null)
+    setSaved(false)
+    try {
+      const reminderHours = Number(hours)
+      const reminderCap = cap.trim() === '' ? null : Number(cap)
+      await game.dispatch({
+        type: 'updateSettings',
+        by: viewer,
+        at: clock.now(),
+        patch: { reminderHours, reminderCap },
+      })
+      await game.dispatch({
+        type: 'updatePlayer',
+        by: viewer,
+        at: clock.now(),
+        patch: { quietHours: quietOn ? { start, end, tz: deviceTimeZone() } : null },
+      })
+      setSaved(true)
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
+  return (
+    <section>
+      <SectionLabel>Reminders and notifications</SectionLabel>
+      <div className="bg-surface border-edge flex flex-col gap-4 rounded-3xl border p-4">
+        <label className="flex min-h-12 items-center justify-between gap-4">
+          <span>
+            <span className="block text-base">Remind after</span>
+            <span className="text-ink-muted block text-xs">
+              hours holding the ball, then again every that many hours.
+            </span>
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={72}
+            step={1}
+            className="bg-abyss/60 border-edge w-20 rounded-xl border px-3 py-2 text-center text-base"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            data-testid="settings-reminder-hours"
+          />
+        </label>
+        <label className="flex min-h-12 items-center justify-between gap-4">
+          <span>
+            <span className="block text-base">Reminders per turn</span>
+            <span className="text-ink-muted block text-xs">Empty means no limit.</span>
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            step={1}
+            className="bg-abyss/60 border-edge w-20 rounded-xl border px-3 py-2 text-center text-base"
+            value={cap}
+            placeholder="none"
+            onChange={(e) => setCap(e.target.value)}
+            data-testid="settings-reminder-cap"
+          />
+        </label>
+        <Toggle
+          label="Quiet hours for me"
+          hint={`No reminders between these times, ${deviceTimeZone()}.`}
+          checked={quietOn}
+          onChange={setQuietOn}
+          testId="settings-quiet-toggle"
+        />
+        {quietOn && (
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-sm">
+              <span className="text-ink-muted block text-xs">From</span>
+              <input
+                type="time"
+                className="bg-abyss/60 border-edge mt-1 w-full rounded-xl border px-3 py-2 text-base"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+                data-testid="settings-quiet-start"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="text-ink-muted block text-xs">To</span>
+              <input
+                type="time"
+                className="bg-abyss/60 border-edge mt-1 w-full rounded-xl border px-3 py-2 text-base"
+                value={end}
+                onChange={(e) => setEnd(e.target.value)}
+                data-testid="settings-quiet-end"
+              />
+            </label>
+          </div>
+        )}
+        {error && <Notice tone="error">{error}</Notice>}
+        {saved && <Notice>Saved.</Notice>}
+        <Button
+          variant="primary"
+          block
+          onClick={save}
+          disabled={game.busy}
+          data-testid="settings-reminders-save"
+        >
+          Save reminders
+        </Button>
+        <div className="border-edge border-t pt-4">
+          <p className="text-base">Turn alerts on this phone</p>
+          <p className="text-ink-muted mt-1 text-xs" data-testid="settings-push-state">
+            {pushState === 'granted'
+              ? 'On. This phone gets a push when it is your turn.'
+              : pushState === 'denied'
+                ? 'Off. Allow notifications for Fathoms in Android settings, then tap below.'
+                : pushState === 'unsupported'
+                  ? 'Push works in the Android app. In a browser, keep this tab open instead.'
+                  : 'Not asked yet.'}
+          </p>
+          <Button
+            className="mt-3"
+            onClick={() => void enablePush()}
+            data-testid="settings-enable-push"
+          >
+            Enable notifications
+          </Button>
+        </div>
+        <LinkButton
+          to="/guide/samsung-battery"
+          variant="ghost"
+          block
+          data-testid="settings-battery-guide"
+        >
+          Samsung battery settings guide
+        </LinkButton>
+      </div>
+    </section>
   )
 }
 
@@ -224,6 +395,8 @@ export function Settings() {
             </div>
           </section>
         )}
+
+        {game.mode === 'online' && <RemindersSection />}
 
         <section>
           <SectionLabel>Packs</SectionLabel>

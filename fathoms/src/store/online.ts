@@ -9,9 +9,12 @@ import { getContent } from '../content'
 import { buildDeck } from '../game/deck'
 import { deckHistory, type Action } from '../game/turns'
 import type { RoomSettings, RoomState } from '../game/types'
+import { cancelBackupReminders, scheduleBackupReminders } from '../notifications/localReminders'
+import { registerForPush, type PushState } from '../notifications/push'
 import { ensureSignedIn } from '../sync/auth'
 import { getFirebaseServices } from '../sync/firebase'
 import {
+  addPushToken,
   createOnlineRoom,
   joinOnlineRoom,
   runRoomAction,
@@ -44,6 +47,8 @@ export interface OnlineData {
   readonly busy: boolean
   readonly reveal: number | null
   readonly drafts: Readonly<Record<string, string>>
+  /** Push registration on this device: unknown until asked. */
+  readonly pushState: PushState | 'unknown'
 }
 
 export interface OnlineActions {
@@ -62,6 +67,8 @@ export interface OnlineActions {
   rebuildDeck(): Promise<void>
   finishReveal(): void
   setDraft(key: string, text: string): void
+  /** Asks for notification permission and registers this device for push. Safe to call again. */
+  enablePush(): Promise<PushState>
 }
 
 export type OnlineStore = OnlineData & OnlineActions
@@ -75,11 +82,38 @@ const EMPTY: OnlineData = {
   busy: false,
   reveal: null,
   drafts: {},
+  pushState: 'unknown',
 }
 
 let unsubscribe: Unsubscribe | null = null
 let presenceTimer: ReturnType<typeof setInterval> | null = null
 let signingIn: Promise<string> | null = null
+let pushRegistered = false
+/** The ball holder seen last, to schedule and cancel the local reminder backup on changes. */
+let lastHolderKey: string | null = null
+
+/**
+ * Keeps the local reminder backup in step with the ball: scheduled when the
+ * ball lands on this device, cancelled when it leaves (PLAN 4.5).
+ */
+export async function syncBackupReminders(
+  roomId: string,
+  uid: string,
+  state: RoomState,
+  now: number,
+): Promise<void> {
+  const mine = state.ball.holderUid === uid && !state.paused
+  const key = `${roomId}:${state.ball.holderUid}:${state.ball.since}:${mine}`
+  if (key === lastHolderKey) return
+  lastHolderKey = key
+  if (mine) {
+    const partner = state.order.find((id) => id !== uid)
+    const partnerName = partner ? (state.players[partner]?.name ?? 'Your partner') : 'Your partner'
+    await scheduleBackupReminders(roomId, partnerName, state.ball.since, now)
+  } else {
+    await cancelBackupReminders(roomId)
+  }
+}
 
 function services() {
   const found = getFirebaseServices()
@@ -128,7 +162,17 @@ export const useOnline = create<OnlineStore>()(
         const { db } = services()
         set({ roomId, status: 'connecting', error: null, snapshot: null, reveal: null })
         unsubscribe = subscribeRoom(db, roomId, uid, {
-          onChange: (snapshot) => set({ snapshot, status: 'live', error: null }),
+          onChange: (snapshot) => {
+            set({ snapshot, status: 'live', error: null })
+            const state = readyState(snapshot)
+            if (state) {
+              void syncBackupReminders(roomId, uid, state, clock.now()).catch(() => undefined)
+              if (!pushRegistered)
+                void get()
+                  .enablePush()
+                  .catch(() => undefined)
+            }
+          },
           onError: (error) => set({ status: 'error', error: errorText(error) }),
         })
         const beat = () => {
@@ -266,6 +310,21 @@ export const useOnline = create<OnlineStore>()(
           if (text) drafts[key] = text
           else delete drafts[key]
           set({ drafts })
+        },
+
+        async enablePush() {
+          pushRegistered = true
+          const state = await registerForPush({
+            onToken: (token) => {
+              const { roomId, uid } = get()
+              if (roomId && uid)
+                void addPushToken(services().db, roomId, uid, token).catch(() => undefined)
+            },
+            onError: (error) => set({ error: error.message }),
+          })
+          if (state === 'denied') pushRegistered = false
+          set({ pushState: state })
+          return state
         },
       }
     },

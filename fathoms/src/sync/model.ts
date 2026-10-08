@@ -72,6 +72,7 @@ export const roomDocSchema = z.object({
   passes: z.record(z.string(), z.number()),
   lighter: z.object({ until: z.number() }).nullable(),
   paused: z.object({ by: z.string(), at: z.number(), note: z.string() }).nullable(),
+  nudge: z.object({ by: z.string(), at: z.number() }).nullable().default(null),
   passedCards: z.record(z.string(), z.number()),
 })
 
@@ -134,6 +135,7 @@ export function toRoomDoc(state: RoomState): RoomDoc {
     passes: { ...state.passes },
     lighter: state.lighter ? { ...state.lighter } : null,
     paused: state.paused ? { ...state.paused } : null,
+    nudge: state.nudge ? { ...state.nudge } : null,
     passedCards: { ...state.passedCards },
   }
 }
@@ -220,6 +222,7 @@ export function fromRoomDoc(
     passes: doc.passes,
     lighter: doc.lighter,
     paused: doc.paused,
+    nudge: doc.nudge,
     passedCards: doc.passedCards,
     cards: cards as readonly CardRecord[],
   }

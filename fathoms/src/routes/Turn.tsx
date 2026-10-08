@@ -5,6 +5,7 @@ import { hashSeed } from '../game/deck'
 import {
   cardBySeq,
   GameError,
+  NUDGE_INTERVAL_MS,
   roomPhase,
   turnView,
   visibleAnswers,
@@ -475,19 +476,34 @@ function ExhaustedView({ game, view }: { readonly game: GameAdapter; readonly vi
 function WaitingView({ game }: { readonly game: GameAdapter }) {
   const { room, viewer } = game
   const now = useNow()
+  const [error, setError] = useState<string | null>(null)
+  const [nudged, setNudged] = useState(false)
   const holder = room.ball.holderUid
   const open = room.openSeq > 0 ? cardBySeq(room, room.openSeq) : undefined
   const recent = room.cards
     .filter((card) => card.status !== 'open')
     .slice(-3)
     .reverse()
+  const nextNudgeAt = room.nudge ? room.nudge.at + NUDGE_INTERVAL_MS : 0
+  const canNudge = now >= nextNudgeAt && !game.busy
+
+  async function nudge() {
+    setError(null)
+    try {
+      await game.dispatch({ type: 'nudge', by: viewer, at: clock.now() })
+      setNudged(true)
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
   return (
     <Screen title="Waiting" right={<NavRight game={game} />} testId="screen-waiting">
       <p className="text-base" data-testid="waiting-holder">
         <PlayerDot color={playerColor(room, holder)} name={`${playerName(room, holder)}'s turn`} />
         <span className="text-ink-muted text-sm">
           {' '}
-          {'·'} since {timeAgo(room.ball.since, now)}
+          {'\u00b7'} since {timeAgo(room.ball.since, now)}
         </span>
       </p>
       {open ? (
@@ -508,12 +524,15 @@ function WaitingView({ game }: { readonly game: GameAdapter }) {
         <Notice>{playerName(room, holder)} opens the next card.</Notice>
       )}
       <div className="mt-4">
-        <Button block disabled data-testid="nudge">
-          Nudge now
+        <Button block disabled={!canNudge} onClick={nudge} data-testid="nudge">
+          {nudged && !canNudge ? 'Nudged' : 'Nudge now'}
         </Button>
         <p className="text-ink-muted mt-1 text-center text-xs">
-          Nudges and turn alerts arrive with notifications in Phase 3.
+          {canNudge
+            ? 'One extra push to your partner, at most once every 10 hours.'
+            : `Next nudge ${timeAgo(nextNudgeAt, now) === 'just now' ? 'soon' : 'in ' + timeAgo(now, nextNudgeAt).replace(' ago', '')}.`}
         </p>
+        {error && <Notice tone="error">{error}</Notice>}
       </div>
       {recent.length > 0 && (
         <section className="mt-8">

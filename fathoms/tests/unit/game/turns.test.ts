@@ -7,6 +7,7 @@ import {
   deckHistory,
   GameError,
   nextDeal,
+  NUDGE_INTERVAL_MS,
   partnerOf,
   playersNeedingRules,
   reduce,
@@ -157,6 +158,7 @@ describe('createRoom', () => {
     expect(state.passes).toEqual({ [A]: 3, [B]: 3 })
     expect(state.lighter).toBeNull()
     expect(state.paused).toBeNull()
+    expect(state.nudge).toBeNull()
     expect(state.passedCards).toEqual({})
     expect(state.cards).toEqual([])
     expect(state.deck).toEqual(deckOf(['q1', 'q2']))
@@ -1072,6 +1074,62 @@ describe('settings and players', () => {
     )
     const unchanged = reduce(state, { type: 'updatePlayer', by: A, at: 7, patch: {} }, lookup)
     expect(unchanged.players[A]).toEqual(state.players[A])
+  })
+
+  it('sets and validates quiet hours', () => {
+    let state = ready(['q1'])
+    const quiet = { start: '22:00', end: '07:30', tz: 'Europe/Berlin' }
+    state = reduce(
+      state,
+      { type: 'updatePlayer', by: A, at: 5, patch: { quietHours: quiet } },
+      lookup,
+    )
+    expect(state.players[A]?.quietHours).toEqual(quiet)
+    state = reduce(
+      state,
+      { type: 'updatePlayer', by: A, at: 6, patch: { quietHours: null } },
+      lookup,
+    )
+    expect(state.players[A]?.quietHours).toBeNull()
+    for (const bad of [
+      { start: '25:00', end: '07:00', tz: 'UTC' },
+      { start: '22:00', end: '7:00', tz: 'UTC' },
+      { start: '22:00', end: '07:00', tz: '' },
+      'later',
+    ]) {
+      expectGameError(
+        () =>
+          reduce(
+            state,
+            { type: 'updatePlayer', by: A, at: 7, patch: { quietHours: bad as never } },
+            lookup,
+          ),
+        'invalid-player',
+      )
+    }
+  })
+
+  it('lets the waiting player nudge the holder once every ten hours', () => {
+    const state = send(ready(['q1', 'q2']), A, 10, { open: 'a1' })
+    expectGameError(() => reduce(state, { type: 'nudge', by: B, at: 20 }, lookup), 'own-turn')
+    expectGameError(
+      () => reduce(state, { type: 'nudge', by: 'z', at: 20 }, lookup),
+      'unknown-player',
+    )
+    const nudged = reduce(state, { type: 'nudge', by: A, at: 20 }, lookup)
+    expect(nudged.nudge).toEqual({ by: A, at: 20 })
+    expect(nudged.ball).toEqual(state.ball)
+    expectGameError(
+      () => reduce(nudged, { type: 'nudge', by: A, at: 20 + NUDGE_INTERVAL_MS - 1 }, lookup),
+      'nudge-too-soon',
+    )
+    const again = reduce(nudged, { type: 'nudge', by: A, at: 20 + NUDGE_INTERVAL_MS }, lookup)
+    expect(again.nudge?.at).toBe(20 + NUDGE_INTERVAL_MS)
+    const paused = reduce(nudged, { type: 'pause', by: B, at: 30 }, lookup)
+    expectGameError(
+      () => reduce(paused, { type: 'nudge', by: A, at: 20 + 2 * NUDGE_INTERVAL_MS }, lookup),
+      'paused',
+    )
   })
 
   it('rejects an unknown action', () => {

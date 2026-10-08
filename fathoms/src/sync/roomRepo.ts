@@ -5,6 +5,7 @@
 // copied into the card by the opener's own client once the card is closed.
 import { FirebaseError } from 'firebase/app'
 import {
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -129,6 +130,7 @@ export async function createOnlineRoom(
     passes: { [input.uid]: input.settings.passesPerDeck },
     lighter: null,
     paused: null,
+    nudge: null,
     passedCards: {},
   }
   try {
@@ -269,6 +271,20 @@ export async function touchPresence(
 ): Promise<void> {
   try {
     await updateDoc(roomRef(db, roomId), { [`players.${uid}.lastSeen`]: now })
+  } catch (error) {
+    throw asSyncError(error)
+  }
+}
+
+/** Adds a device push token to the player's list (PLAN 5: players[uid].fcmTokens). The functions prune dead ones. */
+export async function addPushToken(
+  db: Firestore,
+  roomId: string,
+  uid: PlayerId,
+  token: string,
+): Promise<void> {
+  try {
+    await updateDoc(roomRef(db, roomId), { [`players.${uid}.fcmTokens`]: arrayUnion(token) })
   } catch (error) {
     throw asSyncError(error)
   }

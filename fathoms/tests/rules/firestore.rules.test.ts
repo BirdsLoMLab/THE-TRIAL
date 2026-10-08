@@ -73,6 +73,7 @@ function roomDoc(uids: string[], extra: Record<string, unknown> = {}) {
     passes,
     lighter: null,
     paused: null,
+    nudge: null,
     passedCards: {},
     ...extra,
   }

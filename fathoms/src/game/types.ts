@@ -158,6 +158,12 @@ export interface Paused {
   readonly note: string
 }
 
+/** A "Nudge now" from the waiting player (PLAN 6.5). At most one per 10 hours. */
+export interface Nudge {
+  readonly by: PlayerId
+  readonly at: number
+}
+
 export interface Lighter {
   /** Cards up to and including this seq are dealt one level lower. */
   readonly until: number
@@ -181,6 +187,7 @@ export interface RoomState {
   readonly passes: Readonly<Record<PlayerId, number>>
   readonly lighter: Lighter | null
   readonly paused: Paused | null
+  readonly nudge: Nudge | null
   /** cardId to the time it was passed. */
   readonly passedCards: Readonly<Record<string, number>>
   /** Every dealt card, in seq order. A subcollection in Firestore. */

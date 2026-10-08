@@ -4,11 +4,12 @@ Private two-player conversation game for two Android phones. React web app wrapp
 
 ## Status
 
-Phases 0 to 2 are built and verified.
+Phases 0 to 3 are built and verified.
 
 - Phase 1: `src/game` holds the deck builder and the turn reducer (pure, 100 percent line coverage enforced by `pnpm test`, a property test for the strict alternation of the ball) and Same Device mode plays a whole deck on one phone with the room in localStorage.
 - Phase 2: online rooms on Firestore. Anonymous sign in, create and join by invite link or code, the Turn, Waiting, Journal, and Settings screens wired through one transaction per action, a presence dot, and drafts kept per room and card on the device. Security rules live in `firestore.rules` with emulator tests for every negative case the plan names, and a Playwright spec plays ten cards between two browser contexts against the emulators.
-- Still yours to do: create the Firebase project and drop its config in (see Firebase below), and install the debug APK on both phones (see Android debug build). Push and reminders arrive in Phase 3.
+- Phase 3: push and reminders. The Android app registers with FCM and stores its token on the player; `functions/` holds `onBallPass` (turn alert and nudge) and `reminderSweep` (hourly, with quiet hours and a cap), tested with fake timers and against the Firestore emulator; the phone schedules local backup reminders at 10, 20, and 30 hours; Settings has reminder hours, the cap, quiet hours, a notification switch, and the Samsung battery guide.
+- Still yours to do: create the Firebase project and drop its config in (see Firebase below), deploy the functions once the project is on Blaze (see Functions below), and install the debug APK on both phones (see Android debug build).
 
 Dependency versions were checked against the npm registry on 2026-10-08. Re-check before upgrading.
 
@@ -68,9 +69,23 @@ Do this once, in the Firebase console, signed in with the Google account that wi
 6. Project settings, then Cloud Messaging: nothing to do yet. Phase 3 wires push.
 7. Upgrade the project to the Blaze plan before Phase 3. Cloud Functions need it. Usage for two people stays inside the free quotas.
 
+## Functions (Phase 3, needs the Blaze plan)
+
+`functions/` is its own package (`cd functions && pnpm install`). `pnpm -C functions test` runs the reminder math with fake timers; `pnpm test:rules` at the root also runs the handlers against the Firestore emulator (they write to `rooms/{id}/outbox` there instead of calling FCM). To deploy:
+
+```bash
+cd functions
+pnpm install
+pnpm deploy          # builds, then firebase deploy --only functions
+```
+
+The Firebase CLI needs a login (`pnpm exec firebase login`) and the project selected (`pnpm exec firebase use <project-id>` writes `.firebaserc`). `onBallPass` is a Firestore trigger on `rooms/{roomId}`; `reminderSweep` runs every 60 minutes through Cloud Scheduler, which the deploy sets up. Both use the default service account.
+
+The Functions emulator could not register its Firestore trigger inside the build container (the Firestore emulator answered 502 to the registration call), so the emulator tests call the exported handlers directly. On a normal machine `pnpm -C functions serve` runs the full emulator set.
+
 ## Android debug build
 
-The web app is copied into `android/app/src/main/assets/public` by `cap sync`. The Android project itself is committed. The native shell is dark (window background, splash background, and system bar icons) to match the app; the launcher icon is still the Capacitor default until a Fathoms icon is drawn.
+Push needs `android/app/google-services.json` from the Firebase console (see Firebase above); without it the app builds and runs, but turn alerts stay off and the local backup reminders still fire. The web app is copied into `android/app/src/main/assets/public` by `cap sync`. The Android project itself is committed. The native shell is dark (window background, splash background, and system bar icons) to match the app; the launcher icon is still the Capacitor default until a Fathoms icon is drawn.
 
 With Android Studio:
 
@@ -130,6 +145,8 @@ fathoms/
   src/game-ui/        the game adapter context and the two providers (Same Device, online room)
   src/store/          zustand stores: sameDevice (localStorage room), online (room id and drafts), clock
   src/sync/           Firebase init, anonymous auth, document schemas, the room repository (transactions, listeners)
+  src/notifications/  push registration, the notification channel, the local reminder backup
+  functions/          Cloud Functions: onBallPass, reminderSweep, and their tests
   src/components/     shared UI: buttons, inputs, card blocks, level chips, color picker
   src/routes/         one file per screen, routes.ts is the hash route table
   scripts/            content check, dash check, Vite content plugin, Android debug build
