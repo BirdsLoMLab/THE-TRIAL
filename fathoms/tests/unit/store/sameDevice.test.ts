@@ -102,6 +102,30 @@ describe('same device store', () => {
     expect(store().room?.cards[0]?.status).toBe('closed')
   })
 
+  it('keeps the phone with whoever closes the last card of a deck', () => {
+    store().newGame({
+      players,
+      settings: { packs: ['core'], startLevel: 3, currentEvery: 0 },
+      seed: 's',
+      now: 1,
+    })
+    agreeBoth()
+    const room = store().room!
+    useSameDevice.setState({
+      room: { ...room, deck: { ...room.deck, cards: room.deck.cards.slice(0, 1) } },
+    })
+    store().sendTurn({ open: 'Ada opens' }, 10)
+    expect(store().handoff).toBe(true)
+    store().acknowledgeHandoff()
+    store().sendTurn({ close: 'Ben closes' }, 20)
+    expect(store().reveal).toBe(1)
+    expect(store().handoff).toBe(false)
+    store().finishReveal()
+    expect(store().handoff).toBe(false)
+    expect(store().room?.ball.holderUid).toBe('p2')
+    expect(roomPhase(store().room!)).toBe('exhausted')
+  })
+
   it('rejects a send that breaks the rules without touching the room', () => {
     store().newGame({ players, seed: 's', now: 1 })
     const before = store().room

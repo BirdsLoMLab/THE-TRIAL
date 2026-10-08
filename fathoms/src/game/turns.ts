@@ -46,6 +46,7 @@ export type GameErrorCode =
   | 'invalid-deck'
   | 'own-turn'
   | 'nudge-too-soon'
+  | 'nothing-lighter'
   | 'adult-confirmation'
 
 /** Thrown for any action the rules do not allow. The UI shows `message`; Firestore transactions abort. */
@@ -188,7 +189,7 @@ export type Action =
     }
 
 export interface CatchUp {
-  /** The card the holder opened last turn, now closed or passed by the partner. */
+  /** The card the holder opened last turn, now closed or passed by the partner. Never a card the holder passed. */
   readonly card: CardRecord
   readonly canAskFollowUp: boolean
 }
@@ -200,6 +201,7 @@ export interface PendingFollowUp {
 }
 
 export interface CloseStep {
+  /** The open card with only the answers the holder may see (blind close). */
   readonly card: CardRecord
   /** The opener answer, only when settings.closerSeesOpener is on. */
   readonly openerAnswer: string | null
@@ -225,6 +227,8 @@ export interface TurnView {
   readonly deckExhausted: boolean
   readonly passesLeft: number
   readonly lighter: Lighter | null
+  /** Go lighter would change the next card. False on a deck with nothing lighter left. */
+  readonly canGoLighter: boolean
   readonly canSend: boolean
 }
 
@@ -398,23 +402,37 @@ export function visibleAnswers(
 
 /**
  * The card that would be dealt next, with Go lighter applied: inside the
- * lighter window a question is replaced by the first undealt question one
- * level lower, when there is one. Pure, so the preview and the deal agree.
+ * lighter window a question is replaced by the first undealt question of the
+ * nearest lower level that still has one. Pure, so the preview and the deal agree.
  */
 export function nextDeal(state: RoomState, lookup: CardLookup): NextDeal | null {
   const { deck, lighter } = state
   if (deck.dealt >= deck.cards.length) return null
   const seq = state.cards.length + 1
   const card = requirePoolCard(lookup, deck.cards[deck.dealt])
-  if (lighter && seq <= lighter.until && card.type === 'question' && card.level > 1) {
-    const wanted = card.level - 1
-    for (let i = deck.dealt; i < deck.cards.length; i++) {
-      const candidate = requirePoolCard(lookup, deck.cards[i])
-      if (candidate.type === 'question' && candidate.level === wanted)
-        return { index: i, seq, card: candidate }
+  if (lighter && seq <= lighter.until && card.type === 'question') {
+    for (let wanted = card.level - 1; wanted >= 1; wanted--) {
+      for (let i = deck.dealt; i < deck.cards.length; i++) {
+        const candidate = requirePoolCard(lookup, deck.cards[i])
+        if (candidate.type === 'question' && candidate.level === wanted)
+          return { index: i, seq, card: candidate }
+      }
     }
   }
   return { index: deck.dealt, seq, card }
+}
+
+/**
+ * Whether Go lighter has anything to do: a lighter window starting now would
+ * deal a different next card. On a linear deck past the lowest level, or with
+ * a Current up next, there is nothing lighter to pull forward.
+ */
+export function lighterAvailable(state: RoomState, lookup: CardLookup): boolean {
+  const plain = nextDeal({ ...state, lighter: null }, lookup)
+  if (!plain) return false
+  const until = state.cards.length + state.settings.lighterWindowCards
+  const lighter = nextDeal({ ...state, lighter: { until } }, lookup) as NextDeal
+  return lighter.card.id !== plain.card.id
 }
 
 /** The Turn screen for the ball holder. */
@@ -422,13 +440,15 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
   const holder = state.ball.holderUid
   const partner = partnerOf(state, holder)
   const me = requirePlayer(state, holder)
-  const lastTurnAt = me.lastTurnAt ?? -Infinity
+  // Fresh means it happened at or after the turn count the holder last sent on.
+  const lastTurn = me.lastTurn ?? 0
 
   let catchUp: CatchUp | null = null
   for (let i = state.cards.length - 1; i >= 0; i--) {
     const card = state.cards[i] as CardRecord
-    if (card.openerUid !== holder || card.status === 'open') continue
-    if (card.status !== 'hidden' && (card.closedAt ?? -Infinity) > lastTurnAt) {
+    // A card the holder passed as opener is not a reveal, it is skipped over.
+    if (card.openerUid !== holder || card.status === 'open' || card.passedBy === holder) continue
+    if (card.status !== 'hidden' && (card.closedTurn ?? -1) >= lastTurn) {
       catchUp = {
         card,
         canAskFollowUp:
@@ -441,7 +461,7 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
   const pendingFollowUps: PendingFollowUp[] = []
   for (const card of state.cards) {
     const followUp = card.followUps[partner]
-    if (followUp && followUp.reply === null && followUp.at > lastTurnAt) {
+    if (followUp && followUp.reply === null && followUp.askedTurn >= lastTurn) {
       pendingFollowUps.push({ card, askedBy: partner, followUp })
     }
   }
@@ -449,7 +469,7 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
   const open = openCard(state)
   const close: CloseStep | null = open
     ? {
-        card: open,
+        card: { ...open, answers: visibleAnswers(state, open, holder) },
         openerAnswer: state.settings.closerSeesOpener
           ? (open.answers[open.openerUid]?.text ?? null)
           : null,
@@ -472,6 +492,7 @@ export function turnView(state: RoomState, lookup: CardLookup): TurnView {
     deckExhausted: deal === null,
     passesLeft: state.passes[holder] ?? 0,
     lighter: state.lighter,
+    canGoLighter: lighterAvailable(state, lookup),
     canSend: state.paused === null && rulesAgreed && (close !== null || openStep !== null),
   }
 }
@@ -491,6 +512,7 @@ export function newPlayer(input: Omit<NewPlayer, 'uid'>, joinedAt: number): Play
     afterDarkEnabled: false,
     afterDarkConfirmedAt: null,
     lastTurnAt: null,
+    lastTurn: null,
     rulesAgreedAt: null,
   }
 }
@@ -582,6 +604,7 @@ function dealCard(
     readBy: {},
     status: passed ? 'passed' : 'open',
     closedAt: passed ? at : null,
+    closedTurn: passed ? state.turn : null,
     passedBy: passed ? by : null,
   }
   const lighter = state.lighter && deal.seq >= state.lighter.until ? null : state.lighter
@@ -651,6 +674,7 @@ function sendTurn(
         answers: { ...open.answers, [by]: { text, at } },
         status: 'closed',
         closedAt: at,
+        closedTurn: state.turn,
       }),
     }
   }
@@ -660,11 +684,15 @@ function sendTurn(
     const dealt = dealCard(next, lookup, at, by, { text, at })
     next = { ...dealt.state, openSeq: dealt.card.seq }
   }
-  next = patchPlayer(next, by, { lastTurnAt: at })
+  const turn = state.turn + 1
+  next = patchPlayer(next, by, { lastTurnAt: at, lastTurn: turn })
+  // The ball follows the dealt card to its closer. Closing the last card of a
+  // deck deals nothing, so the closer keeps the ball and opens the next deck.
+  const holderUid = deal ? partner : by
   return {
     ...next,
-    ball: { holderUid: partner, since: at, lastReminderAt: null, remindersSent: 0 },
-    turn: state.turn + 1,
+    ball: { holderUid, since: at, lastReminderAt: null, remindersSent: 0 },
+    turn,
   }
 }
 
@@ -695,7 +723,13 @@ function pass(
       openSeq: 0,
       passes,
       passedCards: { ...state.passedCards, [open.cardId]: at },
-      cards: replaceCard(state.cards, { ...open, status: 'passed', closedAt: at, passedBy: by }),
+      cards: replaceCard(state.cards, {
+        ...open,
+        status: 'passed',
+        closedAt: at,
+        closedTurn: state.turn,
+        passedBy: by,
+      }),
     }
   }
   const deal = nextDeal(state, lookup)
@@ -705,8 +739,14 @@ function pass(
   return { ...dealt.state, passes, passedCards: { ...state.passedCards, [deal.card.id]: at } }
 }
 
-function goLighter(state: RoomState, action: Extract<Action, { type: 'lighter' }>): RoomState {
+function goLighter(
+  state: RoomState,
+  action: Extract<Action, { type: 'lighter' }>,
+  lookup: CardLookup,
+): RoomState {
   requireTurn(state, action.by)
+  if (!lighterAvailable(state, lookup))
+    fail('nothing-lighter', 'nothing lighter is left in this deck')
   return { ...state, lighter: { until: state.cards.length + state.settings.lighterWindowCards } }
 }
 
@@ -755,7 +795,7 @@ function askFollowUp(
     ...state,
     cards: replaceCard(state.cards, {
       ...card,
-      followUps: { ...card.followUps, [by]: { text, at, reply: null } },
+      followUps: { ...card.followUps, [by]: { text, at, askedTurn: state.turn, reply: null } },
     }),
   }
 }
@@ -893,6 +933,7 @@ function afterDark(
         ...open,
         status: 'passed',
         closedAt: action.at,
+        closedTurn: next.turn,
         passedBy: action.by,
       }),
     }
@@ -935,7 +976,7 @@ function apply(state: RoomState, action: Action, lookup: CardLookup): RoomState 
     case 'pass':
       return pass(state, action, lookup)
     case 'lighter':
-      return goLighter(state, action)
+      return goLighter(state, action, lookup)
     case 'pause':
       return pause(state, action)
     case 'resume':

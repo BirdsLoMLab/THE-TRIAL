@@ -28,6 +28,7 @@ function player(
     afterDarkEnabled: false,
     afterDarkConfirmedAt: null,
     lastTurnAt: null,
+    lastTurn: null,
     rulesAgreedAt: 1,
   }
 }
@@ -90,6 +91,7 @@ beforeAll(async () => {
     readBy: {},
     status: 'open',
     closedAt: null,
+    closedTurn: null,
     passedBy: null,
   })
 })

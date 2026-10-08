@@ -16,8 +16,8 @@ PLAN.md section 13 lists the open decisions with defaults. Every default was kep
 1. A Current is dealt as an ordinary card: the opener does what it says and writes a one line note, the closer does the same. No follow-ups on Currents, no reveal screen for them (the catch up shows both notes). PLAN 4.4 called a Current "a turn on its own"; this reading keeps the ball changing hands exactly once per card.
 2. Mixed progression shuffles every eligible question together. PLAN 4.6 named the option without defining it.
 3. Rules agreement is tracked per player and reset on every deck rebuild, so the Rules screen shows again then, as PLAN 4.2 asks. A send needs the sender's agreement.
-4. Players carry `lastTurnAt` and `rulesAgreedAt`; cards carry `closedAt` and `passedBy` (passes are visible). The room carries `order`, `turn`, `cardCount`, `nudge`, and `deleteRequests`. PLAN section 5 did not list them.
-5. A follow-up is shown for a reply at the start of the answering player's next turn only (it is pending while it was asked after their last send). Skipped, it stays in the journal as unanswered and can still be replied to from the reveal of that card later.
+4. Players carry `lastTurnAt`, `lastTurn`, and `rulesAgreedAt`; cards carry `closedAt`, `closedTurn`, and `passedBy` (passes are visible); follow-ups carry `askedTurn`. The room carries `order`, `turn`, `cardCount`, `nudge`, and `deleteRequests`. PLAN section 5 did not list them. Catch up and pending follow-ups are decided by the turn counters, never by comparing clocks from two phones.
+5. A follow-up is shown for a reply at the start of the answering player's next turn only (it is pending while it was asked at or after the turn count of their last send). Skipped, it stays in the journal as unanswered and can still be replied to from the reveal of that card later.
 6. The After Dark skip (PLAN 4.7) is a pass that costs nothing. Turning After Dark off passes an open After Dark card for free and prunes undealt ones (PLAN 4.9).
 7. Blind close and the Send transaction conflict in PLAN section 5: the closer cannot read the opener's private answer inside the close transaction while the card is open. So the closer writes only its own answer; the opener's client copies its private answer into the card once the card is closed, and the closer reads the private document directly for the reveal in between. Rules let a member read a private document once the parent card is closed or passed.
 8. The room document is readable by any signed in user while it still has one player (the joiner must read it to join), and anyone signed in can learn that a room id does not exist. After the second player joins, only members can read it. Rooms can never be listed.
@@ -27,6 +27,9 @@ PLAN.md section 13 lists the open decisions with defaults. Every default was kep
 12. Custom cards are validated like printed ones (1 to 220 characters, no double quotes) and dealt under the pack id `custom`. Custom After Dark cards follow the After Dark gate.
 13. The app lock holds a salted SHA-256 of the PIN in localStorage and re-locks after 30 seconds in the background. Biometrics go through `@aparajita/capacitor-biometric-auth` 10.0.0 (Capacitor 8).
 14. Phase 6 (Live mode) was not started: PLAN 4.10 makes it conditional on wanting it after using Turns mode.
+15. Closing the last card of a deck keeps the ball with the closer (a send that deals nothing does not pass it). The closer rebuilds the deck and opens its first card, so every card's opener is still the previous card's closer, across decks. Phase 1 as first committed passed the ball there, which gave one player two openings in a row around every rebuild. No push goes out for that send since the holder did not change; the Waiting screen tells the partner the deck is finished.
+16. Currents are spread over the whole deck: the gap between Currents is the larger of `currentEvery` and `floor(questions / (Currents + 1))`. With the bundled packs that is 9 questions instead of PLAN 4.6's 5, because 5 would place every Current inside the first level and leave the rest of the deck without any. `currentEvery` stays the minimum gap and 0 still disables Currents. Reverse it by making `currentInterval` in `src/game/deck.ts` return `settings.currentEvery`.
+17. Go lighter is offered only when it would change the next card (`canGoLighter`); otherwise the menu item is greyed out and the reducer refuses with `nothing-lighter`. The substitute is the first undealt question of the nearest lower level, not only one level down. On a linear deck that has already left level 1 there is nothing lighter to pull forward, which PLAN 4.7 does not address.
 
 ## Phase 0: scaffold (6e24d9a, 0c77e76)
 
@@ -40,7 +43,7 @@ Added in this session: the Android SDK was reachable after all, so the command l
 - `src/game/turns.ts`: the reducer and the turn view. 91 tests, a property test over random play, 100 percent line coverage enforced by `pnpm test`.
 - Same Device: store in localStorage, Home, setup, Rules, Turn (catch up, close, open, send, reveal, hand off), Journal, Settings subset. Playwright plays a full deck on one phone, reloads mid turn, and recovers from an empty rebuild.
 - Acceptance: a full deck on one phone (e2e), the journal survives a reload (e2e and unit), `src/game` at 100 percent lines.
-- A 90 agent adversarial review of this phase ran in the background through the rest of the session; its confirmed findings are in the "Phase 1 review fixes" commit if one follows this log, otherwise it had not finished.
+- A 90 agent adversarial review of this phase ran in the background through the rest of the session; its confirmed findings are in the "Phase 1 review fixes" commit below.
 
 ## Phase 2: rooms and Turns mode (2dd19d9)
 
@@ -61,11 +64,25 @@ Added in this session: the Android SDK was reachable after all, so the command l
 - Journal: filters, search, grouping by day, reactions and favorites on each entry, tombstones, Markdown export. Settings: After Dark, topics to skip, custom cards, app lock, Delete Room. A custom card editor.
 - Acceptance: After Dark never dealt unless both enabled (deck builder tests, reducer tests, rules tests); a hidden after read entry has no content once both read stamps exist (reducer and rules); the app lock blocks the Journal and Turn screens cold (unit test).
 
-## Phase 5: release process (this commit)
+## Phase 5: release process (49b71b7)
 
 - Gradle release signing from `android/keystore.properties` or `FATHOMS_KEYSTORE_*`, `pnpm android:release`, `pnpm version:bump`, RELEASE.md with the key procedure, the recovery note, the install and update guide. A signed release APK was built here with a throwaway key to prove the pipeline; your key replaces it.
 - Acceptance (both phones run the release build, an update installs over it without losing the room) needs the phones.
 
+## Phase 1 review fixes (this commit)
+
+An adversarial review of `src/game` against PLAN.md (40 finders and refuters) confirmed these, all fixed here with tests:
+
+- An opener pass in the middle of a turn made the holder's own passed card the catch up and hid the reveal they were owed. The catch up now skips cards the holder passed.
+- The close step handed the screen the whole open card, opener answer included. It now carries only the answers the holder may see.
+- Closing the last card of a deck passed the ball, so the player who had just opened the last card also opened the first card of the next deck. The ball now stays with the closer (decision 15). Same Device hands the phone over only when the ball moved.
+- Catch up and pending follow-ups compared timestamps written by two phones. They now compare turn counts (decision 4).
+- Go lighter was a silent no op on a linear deck past level 1 and only ever looked one level down (decision 17).
+- Currents bunched in the first level of the bundled deck (decision 16).
+- The property test was too loose: the random step list rarely reached 60 steps, the non send actions were only checked for not moving the ball, and two assertions could not fail. It now checks every accepted action's exact effect and untouched fields, predicts the error code of every refused action, asserts the open card's closer is the holder, and fails if the generator stops reaching close only sends, opener passes with a catch up pending, rebuilds with a card open, Go lighter, replies, or settings changes.
+
+Refuted by the review and left as designed: rebuild allowed while paused or mid deck (Settings needs it), positional card numbering (guarded by `cardCount` and tombstones), `version` bumping on plain updates, rooms of exactly two players.
+
 ## Numbers at the end
 
-Run from `fathoms/` on 2026-10-08: `pnpm lint` clean, `pnpm test` green with `src/game` and `src/content` at 100 percent lines, `pnpm build` clean, `pnpm test:rules` green against the emulators, `pnpm test:e2e` green (Same Device full deck, two phone room, home smoke test), `pnpm -C functions test` green.
+Run from `fathoms/` on 2026-10-08: `pnpm lint` clean, `pnpm test` green (218 tests) with `src/game` and `src/content` at 100 percent lines, `pnpm build` clean, `pnpm test:rules` green against the emulators (27 tests), `pnpm test:e2e` green (Same Device full deck, two phone room, home smoke test), `pnpm -C functions test` green (13 tests).

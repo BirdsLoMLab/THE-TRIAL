@@ -174,6 +174,7 @@ describe('createRoom', () => {
       afterDarkEnabled: false,
       afterDarkConfirmedAt: null,
       lastTurnAt: null,
+      lastTurn: null,
       rulesAgreedAt: null,
     })
     expect(state.players[B]?.name).toBe('Bob')
@@ -334,6 +335,7 @@ describe('the first turn', () => {
     expect(view.deckExhausted).toBe(false)
     expect(view.passesLeft).toBe(3)
     expect(view.lighter).toBeNull()
+    expect(view.canGoLighter).toBe(false)
     expect(view.canSend).toBe(true)
     expect(roomPhase(state)).toBe('turn')
   })
@@ -360,6 +362,7 @@ describe('the first turn', () => {
       readBy: {},
       status: 'open',
       closedAt: null,
+      closedTurn: null,
       passedBy: null,
     })
     expect(state.openSeq).toBe(1)
@@ -367,7 +370,9 @@ describe('the first turn', () => {
     expect(state.turn).toBe(1)
     expect(state.ball).toEqual({ holderUid: B, since: 10, lastReminderAt: null, remindersSent: 0 })
     expect(state.players[A]?.lastTurnAt).toBe(10)
+    expect(state.players[A]?.lastTurn).toBe(1)
     expect(state.players[B]?.lastTurnAt).toBeNull()
+    expect(state.players[B]?.lastTurn).toBeNull()
     expect(state.version).toBe(before.version + 1)
     expect(before.cards).toEqual([])
     expect(before.openSeq).toBe(0)
@@ -412,6 +417,7 @@ describe('the second turn', () => {
     const card1 = cardBySeq(state, 1)
     expect(card1?.status).toBe('closed')
     expect(card1?.closedAt).toBe(20)
+    expect(card1?.closedTurn).toBe(1)
     expect(card1?.answers).toEqual({
       [A]: { text: 'A opens 1', at: 10 },
       [B]: { text: 'B closes 1', at: 20 },
@@ -430,6 +436,9 @@ describe('the second turn', () => {
   it('shows the opener answer to the closer only when closerSeesOpener is on', () => {
     const blind = send(ready(['q1', 'q2']), A, 10, { open: 'secret' })
     expect(turnView(blind, lookup).close?.openerAnswer).toBeNull()
+    // The close step card carries no hidden answer either, so no screen can leak it.
+    expect(turnView(blind, lookup).close?.card.answers).toEqual({})
+    expect(cardBySeq(blind, 1)?.answers[A]?.text).toBe('secret')
     const open = send(
       ready(['q1', 'q2'], { settings: defaultSettings({ closerSeesOpener: true }) }),
       A,
@@ -439,6 +448,7 @@ describe('the second turn', () => {
       },
     )
     expect(turnView(open, lookup).close?.openerAnswer).toBe('secret')
+    expect(turnView(open, lookup).close?.card.answers).toEqual({ [A]: { text: 'secret', at: 10 } })
   })
 
   it('requires both answers', () => {
@@ -494,17 +504,56 @@ describe('catch up', () => {
     expect(view.open).toBeNull()
   })
 
-  it('does not repeat a reveal the holder already caught up on', () => {
+  it('does not repeat a reveal the holder already caught up on, even across a rebuild', () => {
     let state = threeTurns(['q1', 'q2', 'q3'])
+    expect(turnView(state, lookup).catchUp?.card.seq).toBe(2)
     state = send(state, B, 40, { close: 'B closes 3' })
-    expect(turnView(state, lookup).catchUp?.card.seq).toBe(3)
+    // B keeps the ball (nothing was dealt) and caught up on card 2 before sending.
+    expect(state.ball.holderUid).toBe(B)
+    expect(turnView(state, lookup).catchUp).toBeNull()
     const deck = deckOf(['q4', 'q5', 'q6'])
-    state = reduce(state, { type: 'rebuildDeck', by: A, at: 50, deck }, lookup)
+    state = reduce(state, { type: 'rebuildDeck', by: B, at: 50, deck }, lookup)
     state = reduce(state, { type: 'agreeRules', by: A, at: 51 }, lookup)
     state = reduce(state, { type: 'agreeRules', by: B, at: 52 }, lookup)
-    expect(turnView(state, lookup).catchUp?.card.seq).toBe(3)
-    state = send(state, A, 60, { open: 'A opens 4' })
     expect(turnView(state, lookup).catchUp).toBeNull()
+    state = send(state, B, 60, { open: 'B opens 4' })
+    // A has not sent since B closed card 3: that reveal waits for A across the rebuild.
+    expect(turnView(state, lookup).catchUp?.card.seq).toBe(3)
+    state = send(state, A, 70, { close: 'A closes 4', open: 'A opens 5' })
+    expect(turnView(state, lookup).catchUp?.card.seq).toBe(4)
+    state = send(state, B, 80, { close: 'B closes 5', open: 'B opens 6' })
+    expect(turnView(state, lookup).catchUp?.card.seq).toBe(5)
+  })
+
+  it('skips a card the holder passed as opener and still shows the real reveal', () => {
+    let state = send(send(ready(['q1', 'q2', 'q3', 'q4', 'q5']), A, 10, { open: 'a1' }), B, 20, {
+      close: 'b1',
+      open: 'b2',
+    })
+    state = reduce(state, { type: 'pass', by: A, at: 25, target: 'open' }, lookup)
+    expect(cardBySeq(state, 3)).toMatchObject({ status: 'passed', passedBy: A, openerUid: A })
+    const view = turnView(state, lookup)
+    expect(view.catchUp?.card.seq).toBe(1)
+    expect(view.catchUp?.canAskFollowUp).toBe(true)
+    expect(view.close?.card.seq).toBe(2)
+    expect(view.open?.seq).toBe(4)
+    // On the second turn an opener pass must not conjure a catch up either.
+    let second = send(ready(['q1', 'q2', 'q3']), A, 10, { open: 'a1' })
+    second = reduce(second, { type: 'pass', by: B, at: 15, target: 'open' }, lookup)
+    expect(turnView(second, lookup).catchUp).toBeNull()
+  })
+
+  it('judges freshness by turn count, not by the clock, so a skewed phone hides nothing', () => {
+    let state = send(ready(['q1', 'q2', 'q3']), A, 10, { open: 'a1' })
+    // B's clock runs behind A's: B closes at 4 and asks at 5, both before A's send at 10.
+    state = send(state, B, 4, { close: 'b1', open: 'b2' })
+    state = reduce(state, { type: 'askFollowUp', by: B, at: 5, seq: 1, text: 'Why?' }, lookup)
+    const view = turnView(state, lookup)
+    expect(view.holder).toBe(A)
+    expect(view.catchUp?.card.seq).toBe(1)
+    expect(view.pendingFollowUps.map((p) => p.card.seq)).toEqual([1])
+    expect(cardBySeq(state, 1)?.closedTurn).toBe(1)
+    expect(cardBySeq(state, 1)?.followUps[B]?.askedTurn).toBe(2)
   })
 
   it('shows a card the partner passed as closer, without a follow-up option', () => {
@@ -549,7 +598,7 @@ describe('follow-ups', () => {
       lookup,
     )
     expect(cardBySeq(state, 1)?.followUps).toEqual({
-      [B]: { text: 'What did you leave out?', at: 21, reply: null },
+      [B]: { text: 'What did you leave out?', at: 21, askedTurn: 2, reply: null },
     })
     state = reduce(state, { type: 'askFollowUp', by: A, at: 25, seq: 1, text: 'Why now?' }, lookup)
     expect(Object.keys(cardBySeq(state, 1)?.followUps ?? {})).toEqual([B, A])
@@ -635,7 +684,12 @@ describe('follow-ups', () => {
     state = send(state, A, 30, { close: 'a2', open: 'a3' })
     state = send(state, B, 40, { close: 'b3', open: 'b4' })
     expect(turnView(state, lookup).pendingFollowUps).toEqual([])
-    expect(cardBySeq(state, 1)?.followUps[B]).toEqual({ text: 'Skipped', at: 21, reply: null })
+    expect(cardBySeq(state, 1)?.followUps[B]).toEqual({
+      text: 'Skipped',
+      at: 21,
+      askedTurn: 2,
+      reply: null,
+    })
     const late = reduce(
       state,
       { type: 'replyFollowUp', by: A, at: 45, seq: 1, text: 'Late answer' },
@@ -738,6 +792,7 @@ describe('pass', () => {
     expect(state.openSeq).toBe(1)
     expect(cardBySeq(state, 2)?.status).toBe('passed')
     const view = turnView(state, lookup)
+    expect(view.catchUp).toBeNull()
     expect(view.close?.card.seq).toBe(1)
     expect(view.open?.seq).toBe(3)
     expect(view.open?.card.id).toBe('q3')
@@ -823,19 +878,47 @@ describe('go lighter', () => {
     expect(turnView(state, lookup).open?.card.id).toBe('q6')
   })
 
-  it('leaves level 1 cards, Currents, and cards with no lower match alone', () => {
-    let state = ready(['q1', 'w1', 'q6', 'q7'], {
+  it('falls back to the nearest lower level that still has a card, and leaves the rest alone', () => {
+    // q6 is level 3 and no level 2 card is undealt, so a level 1 card comes forward.
+    let state = ready(['q6', 'q1', 'w1', 'q7'], {
       settings: defaultSettings({ lighterWindowCards: 5 }),
     })
+    expect(turnView(state, lookup).canGoLighter).toBe(true)
     state = reduce(state, { type: 'lighter', by: A, at: 5 }, lookup)
-    expect(nextDeal(state, lookup)?.card.id).toBe('q1')
+    expect(nextDeal(state, lookup)).toEqual({ index: 1, seq: 1, card: BY_ID.get('q1') })
     state = send(state, A, 10, { open: 'a1' })
-    expect(nextDeal(state, lookup)?.card.id).toBe('w1')
-    state = send(state, B, 20, { close: 'b1', open: 'b2' })
+    expect(state.deck.cards).toEqual(['q1', 'q6', 'w1', 'q7'])
+    // Nothing lower is left: q6 is dealt as it is, then the Current, then q7.
     expect(nextDeal(state, lookup)?.card.id).toBe('q6')
+    expect(turnView(state, lookup).canGoLighter).toBe(false)
+    state = send(state, B, 20, { close: 'b1', open: 'b2' })
+    expect(nextDeal(state, lookup)?.card.id).toBe('w1')
     state = send(state, A, 30, { close: 'a2', open: 'a3' })
-    expect(cardBySeq(state, 3)?.cardId).toBe('q6')
-    expect(state.deck.cards).toEqual(['q1', 'w1', 'q6', 'q7'])
+    expect(nextDeal(state, lookup)?.card.id).toBe('q7')
+    expect(state.deck.cards).toEqual(['q1', 'q6', 'w1', 'q7'])
+  })
+
+  it('refuses Go lighter when it would not change the next card', () => {
+    // Level 1 up next; a Current up next; a linear deck past its lowest level; an empty deck.
+    for (const cards of [['q1', 'q2'], ['w1', 'q6', 'q1'], ['q4', 'q5', 'q6'], []]) {
+      const state = ready(cards)
+      expect(turnView(state, lookup).canGoLighter).toBe(false)
+      expectGameError(
+        () => reduce(state, { type: 'lighter', by: A, at: 5 }, lookup),
+        'nothing-lighter',
+      )
+    }
+    // Once the only lower card is used up, extending the window is refused too.
+    let state = ready(['q4', 'q1', 'q5'], { settings: defaultSettings({ lighterWindowCards: 1 }) })
+    state = reduce(state, { type: 'lighter', by: A, at: 5 }, lookup)
+    state = send(state, A, 10, { open: 'a1' })
+    expect(cardBySeq(state, 1)?.cardId).toBe('q1')
+    expect(state.lighter).toBeNull()
+    expect(turnView(state, lookup).canGoLighter).toBe(false)
+    expectGameError(
+      () => reduce(state, { type: 'lighter', by: B, at: 15 }, lookup),
+      'nothing-lighter',
+    )
   })
 
   it('can be triggered again to extend the window, and only by the holder while not paused', () => {
@@ -922,7 +1005,7 @@ describe('pause and resume', () => {
 })
 
 describe('deck exhaustion and rebuild', () => {
-  it('closes the last card without opening another, then waits for a new deck', () => {
+  it('closes the last card without opening another; the closer keeps the ball for the new deck', () => {
     let state = threeTurns(['q1', 'q2', 'q3'])
     expect(turnView(state, lookup).open).toBeNull()
     expect(turnView(state, lookup).deckExhausted).toBe(true)
@@ -930,18 +1013,23 @@ describe('deck exhaustion and rebuild', () => {
     expectGameError(() => send(state, B, 40, { close: 'b3', open: 'extra' }), 'unexpected-answer')
     state = send(state, B, 40, { close: 'b3' })
     expect(state.openSeq).toBe(0)
-    expect(state.ball.holderUid).toBe(A)
+    expect(state.turn).toBe(4)
     expect(cardBySeq(state, 3)?.status).toBe('closed')
+    // No card was dealt, so the ball stays: B deals the next deck and opens its first card,
+    // which keeps every card's opener equal to the previous card's closer.
+    expect(state.ball).toEqual({ holderUid: B, since: 40, lastReminderAt: null, remindersSent: 0 })
+    expect(state.players[B]?.lastTurn).toBe(4)
     const view = turnView(state, lookup)
-    expect(view.catchUp?.card.seq).toBe(3)
+    expect(view.holder).toBe(B)
+    expect(view.catchUp).toBeNull()
     expect(view.close).toBeNull()
     expect(view.open).toBeNull()
     expect(view.deckExhausted).toBe(true)
     expect(view.canSend).toBe(false)
     expect(roomPhase(state)).toBe('exhausted')
-    expectGameError(() => send(state, A, 50), 'nothing-to-send')
+    expectGameError(() => send(state, B, 50), 'nothing-to-send')
     expectGameError(
-      () => reduce(state, { type: 'pass', by: A, at: 50, target: 'open' }, lookup),
+      () => reduce(state, { type: 'pass', by: B, at: 50, target: 'open' }, lookup),
       'nothing-to-pass',
     )
   })
@@ -954,11 +1042,19 @@ describe('deck exhaustion and rebuild', () => {
   })
 
   it('rebuilds with a new deck, resets passes and lighter, and asks for the rules again', () => {
-    let state = threeTurns(['q1', 'q2', 'q3'])
+    let state = ready(['q1', 'q4', 'q2'], { settings: defaultSettings({ lighterWindowCards: 5 }) })
+    state = send(state, A, 10, { open: 'a1' })
+    state = reduce(state, { type: 'lighter', by: B, at: 15 }, lookup)
+    state = reduce(state, { type: 'pass', by: B, at: 16, target: 'close' }, lookup)
+    state = send(state, B, 20, { open: 'b2' })
+    expect(cardBySeq(state, 2)?.cardId).toBe('q2')
+    state = send(state, A, 30, { close: 'a2', open: 'a3' })
     state = reduce(state, { type: 'pass', by: B, at: 35, target: 'close' }, lookup)
-    state = reduce(state, { type: 'lighter', by: B, at: 36 }, lookup)
+    expect(state.lighter).toEqual({ until: 6 })
+    expect(state.passes).toEqual({ [A]: 3, [B]: 1 })
     expect(turnView(state, lookup).open).toBeNull()
-    const deck = { seed: 'second', cards: ['q4', 'q5', 'q6'], dealt: 0, builtAt: 50 }
+    expect(roomPhase(state)).toBe('exhausted')
+    const deck = { seed: 'second', cards: ['q5', 'q6', 'q7'], dealt: 0, builtAt: 50 }
     const rebuilt = reduce(state, { type: 'rebuildDeck', by: B, at: 50, deck }, lookup)
     expect(rebuilt.deck).toEqual(deck)
     expect(rebuilt.passes).toEqual({ [A]: 3, [B]: 3 })
@@ -972,8 +1068,33 @@ describe('deck exhaustion and rebuild', () => {
     expectGameError(() => send(rebuilt, B, 60, { open: 'x' }), 'rules-not-agreed')
     let next = reduce(rebuilt, { type: 'agreeRules', by: B, at: 61 }, lookup)
     next = send(next, B, 62, { open: 'B opens the new deck' })
-    expect(cardBySeq(next, 4)?.cardId).toBe('q4')
+    expect(cardBySeq(next, 4)?.cardId).toBe('q5')
     expect(next.ball.holderUid).toBe(A)
+  })
+
+  it('continues a half written turn after a rebuild with a card open', () => {
+    let state = send(ready(['q1']), A, 10, { open: 'a1' })
+    const deck = { seed: 'again', cards: ['q1', 'q2', 'q3'], dealt: 0, builtAt: 20 }
+    state = reduce(state, { type: 'rebuildDeck', by: A, at: 20, deck }, lookup)
+    expect(state.deck.cards).toEqual(['q2', 'q3'])
+    expect(roomPhase(state)).toBe('rules')
+    expectGameError(() => send(state, B, 21, { close: 'b1', open: 'b2' }), 'rules-not-agreed')
+    state = reduce(state, { type: 'agreeRules', by: B, at: 22 }, lookup)
+    const view = turnView(state, lookup)
+    expect(view.close?.card.seq).toBe(1)
+    expect(view.open).toEqual({ seq: 2, card: BY_ID.get('q2') })
+    state = send(state, B, 30, { close: 'b1', open: 'b2' })
+    expect(cardBySeq(state, 1)).toMatchObject({
+      status: 'closed',
+      closedTurn: 1,
+      answers: { [A]: { text: 'a1', at: 10 }, [B]: { text: 'b1', at: 30 } },
+    })
+    expect(cardBySeq(state, 2)).toMatchObject({ cardId: 'q2', status: 'open', openerUid: B })
+    expect(state.deck.dealt).toBe(1)
+    expect(state.ball.holderUid).toBe(A)
+    expect(state.turn).toBe(2)
+    state = reduce(state, { type: 'agreeRules', by: A, at: 31 }, lookup)
+    expect(turnView(state, lookup).catchUp?.card.seq).toBe(1)
   })
 
   it('keeps the open card and drops it from the new deck', () => {
@@ -1206,11 +1327,12 @@ describe('a full deck on one device', () => {
         },
         realLookup,
       )
-      expectedHolder = expectedHolder === A ? B : A
+      if (view.open) expectedHolder = expectedHolder === A ? B : A
       at += 10
     }
     expect(roomPhase(state)).toBe('exhausted')
     expect(state.turn).toBe(deck.cards.length + 1)
+    expect(state.ball.holderUid).toBe(state.cards[state.cards.length - 1]!.closerUid)
     expect(state.cards).toHaveLength(deck.cards.length)
     expect(state.cards.every((c) => c.status === 'closed')).toBe(true)
     expect(state.cards.every((c) => Object.keys(c.answers).length === 2)).toBe(true)

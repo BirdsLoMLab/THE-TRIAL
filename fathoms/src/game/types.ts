@@ -102,8 +102,14 @@ export interface Player extends DeckPlayer {
   readonly fcmTokens: readonly string[]
   readonly quietHours: QuietHours | null
   readonly afterDarkConfirmedAt: number | null
-  /** When this player last sent a turn. Drives catch up and pending follow-ups. */
+  /** When this player last sent a turn. Informational: freshness uses lastTurn. */
   readonly lastTurnAt: number | null
+  /**
+   * The room turn count after this player's last send. Catch up and pending
+   * follow-ups compare turn counts, never clocks, so two phones can disagree
+   * about the time without hiding a reveal.
+   */
+  readonly lastTurn: number | null
   /** When this player agreed to the rules for the current deck. Reset on rebuild. */
   readonly rulesAgreedAt: number | null
 }
@@ -132,6 +138,8 @@ export interface Answer {
 export interface FollowUp {
   readonly text: string
   readonly at: number
+  /** The room turn count when the question was asked. Pending while the holder has not sent since. */
+  readonly askedTurn: number
   readonly reply: Answer | null
 }
 
@@ -160,6 +168,8 @@ export interface CardRecord {
   readonly status: CardStatus
   /** When the card left the open state (closed or passed). */
   readonly closedAt: number | null
+  /** The room turn count when the card left the open state. Drives catch up. */
+  readonly closedTurn: number | null
   /** Who passed the card, when status is passed. */
   readonly passedBy: PlayerId | null
 }

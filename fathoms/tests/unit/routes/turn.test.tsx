@@ -95,6 +95,14 @@ describe('Turn screen', () => {
 
   it('passes, goes lighter, and pauses from the overflow menu', async () => {
     const user = userEvent.setup()
+    // Two level 2 cards up front with a level 1 card behind them, so Go lighter has work to do.
+    const room = store().room!
+    useSameDevice.setState({
+      room: {
+        ...room,
+        deck: { ...room.deck, cards: ['c2-01', 'c2-02', 'c1-01', 'c3-01', 'c1-02'] },
+      },
+    })
     renderAt('/same-device/turn')
     const firstCard = view().open!.card.id
     await user.click(screen.getByTestId('turn-menu'))
@@ -108,6 +116,7 @@ describe('Turn screen', () => {
     await user.click(screen.getByTestId('menu-lighter'))
     expect(store().room?.lighter).toEqual({ until: 6 })
     expect(screen.getByTestId('turn-holder')).toHaveTextContent('going lighter')
+    expect(view().open!.card.id).toBe('c1-01')
     await user.click(screen.getByTestId('turn-menu'))
     await user.click(screen.getByTestId('menu-pause'))
     await user.type(screen.getByTestId('pause-note'), 'Back tomorrow')
@@ -116,6 +125,16 @@ describe('Turn screen', () => {
     expect(screen.getByTestId('screen-paused')).toHaveTextContent('Back tomorrow')
     await user.click(screen.getByTestId('resume'))
     expect(screen.getByTestId('screen-turn')).toBeInTheDocument()
+  })
+
+  it('disables Go lighter when the deck has nothing lighter left', async () => {
+    const user = userEvent.setup()
+    renderAt('/same-device/turn')
+    expect(view().canGoLighter).toBe(false)
+    await user.click(screen.getByTestId('turn-menu'))
+    const lighter = screen.getByTestId('menu-lighter')
+    expect(lighter).toBeDisabled()
+    expect(lighter).toHaveTextContent('Nothing lighter left in this deck')
   })
 
   it('reports a rule the reducer refuses instead of crashing', async () => {
@@ -143,15 +162,26 @@ describe('Turn screen', () => {
     await user.type(screen.getByTestId('close-answer'), 'a2')
     await user.click(screen.getByTestId('send'))
     await user.click(screen.getByTestId('reveal-done'))
-    await user.click(screen.getByTestId('handoff-ack'))
+    // Nothing was dealt, so the phone stays with Ada: no handoff, straight to the finished deck.
+    expect(screen.queryByTestId('screen-handoff')).not.toBeInTheDocument()
     expect(screen.getByTestId('screen-exhausted')).toBeInTheDocument()
+    expect(store().room?.ball.holderUid).toBe('p1')
     expect(screen.getByTestId('closer-text').textContent?.length).toBeGreaterThan(10)
-    expect(screen.getByTestId('catch-up')).toHaveTextContent('b2')
+    expect(screen.queryByTestId('catch-up')).not.toBeInTheDocument()
     expect(screen.getByTestId('new-deck')).toHaveTextContent('New deck (30 cards)')
     await user.click(screen.getByTestId('new-deck'))
     await waitFor(() => expect(router.state.location.pathname).toBe('/same-device/rules'))
     expect(store().room?.deck.cards.length).toBe(30)
     expect(store().room?.cards).toHaveLength(2)
+    // Ada opens the new deck; Ben then catches up on the card he opened last.
+    agreeBoth()
+    expect(view().holder).toBe('p1')
+    store().sendTurn({ open: 'a3' }, 40)
+    expect(store().handoff).toBe(true)
+    store().acknowledgeHandoff()
+    expect(view().holder).toBe('p2')
+    expect(view().catchUp?.card.seq).toBe(2)
+    expect(view().close?.card.seq).toBe(3)
   })
 
   it('disables New deck when a rebuild would deal nothing', () => {

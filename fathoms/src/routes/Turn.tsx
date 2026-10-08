@@ -376,12 +376,15 @@ function OverflowMenu({ game, view }: { readonly game: GameAdapter; readonly vie
             role="menuitem"
             variant="ghost"
             className="justify-start text-left"
+            disabled={!view.canGoLighter}
             onClick={() => run('Go lighter', { type: 'lighter', by: holder, at: at() })}
             data-testid="menu-lighter"
           >
-            {lighterActive
-              ? 'Going lighter: extend'
-              : `Go lighter for ${room.settings.lighterWindowCards} cards`}
+            {!view.canGoLighter
+              ? 'Nothing lighter left in this deck'
+              : lighterActive
+                ? 'Going lighter: extend'
+                : `Go lighter for ${room.settings.lighterWindowCards} cards`}
           </Button>
           {pausing ? (
             <div className="px-2 py-1">
@@ -525,6 +528,8 @@ function WaitingView({ game }: { readonly game: GameAdapter }) {
             />
           </CardBlock>
         </div>
+      ) : roomPhase(room) === 'exhausted' ? (
+        <Notice>The deck is finished. {playerName(room, holder)} can deal a new one.</Notice>
       ) : (
         <Notice>{playerName(room, holder)} opens the next card.</Notice>
       )}

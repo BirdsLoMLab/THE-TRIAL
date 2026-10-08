@@ -48,6 +48,7 @@ function player(name: string) {
     afterDarkEnabled: false,
     afterDarkConfirmedAt: null,
     lastTurnAt: null,
+    lastTurn: null,
     rulesAgreedAt: null,
   }
 }
@@ -99,6 +100,7 @@ function cardDoc(opener: string, closer: string, extra: Record<string, unknown> 
     readBy: {},
     status: 'open',
     closedAt: null,
+    closedTurn: null,
     passedBy: null,
     ...extra,
   }

@@ -8,7 +8,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { getContent } from '../content'
 import { newCustomCard, type CustomCardInput } from '../game/custom'
 import { buildDeck } from '../game/deck'
-import { createRoom, deckHistory, reduce, type Action, type Reply } from '../game/turns'
+import { cardBySeq, createRoom, deckHistory, reduce, type Action, type Reply } from '../game/turns'
 import type { CardLookup, CustomCard, PlayerId, RoomSettings, RoomState } from '../game/types'
 import { lookupFor, poolFor } from './lookup'
 
@@ -192,11 +192,19 @@ export const useSameDevice = create<SameDeviceStore>()(
           lookupFor(get().customCards),
         )
         const reveal = closing > 0 ? closing : null
-        set({ room: next, reveal, handoff: reveal === null, drafts: {} })
+        // Closing the last card of a deck keeps the ball, so no handoff then.
+        const handsOver = next.ball.holderUid !== room.ball.holderUid
+        set({ room: next, reveal, handoff: reveal === null && handsOver, drafts: {} })
       },
 
       finishReveal() {
-        set({ reveal: null, handoff: true })
+        const room = get().room
+        const seq = get().reveal
+        const card = room && seq !== null ? cardBySeq(room, seq) : undefined
+        set({
+          reveal: null,
+          handoff: card !== undefined && card.closerUid !== room?.ball.holderUid,
+        })
       },
 
       acknowledgeHandoff() {

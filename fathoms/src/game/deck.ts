@@ -111,9 +111,24 @@ export function eligibleCards(input: BuildDeckInput): EligibleCards {
 }
 
 /**
+ * The questions between Currents: at least `currentEvery`, and more when the
+ * deck has more questions than the Currents could cover at that spacing, so
+ * the Currents spread over the whole deck instead of bunching at the start.
+ * Rounds down, so every eligible Current still finds a slot.
+ */
+export function currentInterval(
+  settings: Pick<DeckSettings, 'currentEvery'>,
+  questionCount: number,
+  currentCount: number,
+): number {
+  if (settings.currentEvery <= 0) return 0
+  return Math.max(settings.currentEvery, Math.floor(questionCount / (currentCount + 1)))
+}
+
+/**
  * filter, group by level, seeded shuffle each group, concatenate in level
  * order (or shuffle everything together for mixed progression), then splice
- * one Current after every `currentEvery` questions, none inside the first
+ * one Current after every `currentInterval` questions, none inside the first
  * `noCurrentsBefore` cards and never as the last card.
  */
 export function buildDeck(input: BuildDeckInput): Deck {
@@ -131,6 +146,7 @@ export function buildDeck(input: BuildDeckInput): Deck {
         )
   const currentQueue = seededShuffle(currents, `${seed}:currents`)
 
+  const interval = currentInterval(settings, ordered.length, currentQueue.length)
   const cards: string[] = []
   let sinceCurrent = 0
   let nextCurrent = 0
@@ -138,7 +154,7 @@ export function buildDeck(input: BuildDeckInput): Deck {
     cards.push(card.id)
     sinceCurrent += 1
     const moreQuestions = index < ordered.length - 1
-    const due = settings.currentEvery > 0 && sinceCurrent >= settings.currentEvery
+    const due = interval > 0 && sinceCurrent >= interval
     const allowed = cards.length >= settings.noCurrentsBefore && nextCurrent < currentQueue.length
     if (due && allowed && moreQuestions) {
       cards.push((currentQueue[nextCurrent] as CurrentPoolCard).id)

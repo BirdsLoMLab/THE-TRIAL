@@ -5,6 +5,7 @@ import {
   afterDarkAllowed,
   buildDeck,
   createRng,
+  currentInterval,
   eligibleCards,
   hashSeed,
   roomExcludeTags,
@@ -410,11 +411,25 @@ describe('buildDeck', () => {
   })
 
   it('respects noCurrentsBefore when it is larger than the interval', () => {
-    const i = input({ settings: { ...settings, currentEvery: 2, noCurrentsBefore: 3 } })
+    // 36 questions and 8 Currents spread to one Current per 4 questions; the first waits for card 6.
+    const i = input({ settings: { ...settings, currentEvery: 2, noCurrentsBefore: 6 } })
     const deck = buildDeck(i)
     const positions = deck.cards.flatMap((id, idx) => (id.includes('-w-') ? [idx] : []))
-    expect(positions[0]).toBe(3)
-    expect(positions.slice(0, 4)).toEqual([3, 6, 9, 12])
+    expect(positions[0]).toBe(6)
+    expect(positions.slice(0, 4)).toEqual([6, 11, 16, 21])
+  })
+
+  it('spreads the Currents over the deck when currentEvery would bunch them at the start', () => {
+    expect(currentInterval({ currentEvery: 5 }, 36, 8)).toBe(5)
+    expect(currentInterval({ currentEvery: 1 }, 36, 8)).toBe(4)
+    expect(currentInterval({ currentEvery: 5 }, 196, 20)).toBe(9)
+    expect(currentInterval({ currentEvery: 5 }, 3, 8)).toBe(5)
+    expect(currentInterval({ currentEvery: 0 }, 196, 20)).toBe(0)
+    const i = input({ settings: { ...settings, currentEvery: 1, noCurrentsBefore: 0 } })
+    const deck = buildDeck(i)
+    const positions = deck.cards.flatMap((id, idx) => (id.includes('-w-') ? [idx] : []))
+    expect(positions).toEqual([4, 9, 14, 19, 24, 29, 34, 39])
+    expect(deck.cards).toHaveLength(44)
   })
 
   it('deals no Currents when currentEvery is 0 or no Current is eligible', () => {
@@ -427,10 +442,13 @@ describe('buildDeck', () => {
   })
 
   it('stops splicing when the Currents run out and never ends the deck with a Current', () => {
-    const i = input({ settings: { ...settings, currentEvery: 1, noCurrentsBefore: 0 } })
+    // 12 questions at level 1 only and 8 Currents: the interval stays 1, so 8 Currents fit in 16 cards.
+    const pool = smallPool().filter((c) => c.type === 'current' || c.level === 1)
+    const i = input({ pool, settings: { ...settings, currentEvery: 1, noCurrentsBefore: 0 } })
     const deck = buildDeck(i)
     const currents = deck.cards.filter((id) => id.includes('-w-'))
     expect(currents).toHaveLength(8)
+    expect(deck.cards).toHaveLength(20)
     expect(deck.cards[0]!.includes('-w-')).toBe(false)
     expect(deck.cards[deck.cards.length - 1]!.includes('-w-')).toBe(false)
     expect(deck.cards.slice(0, 16).filter((id) => id.includes('-w-'))).toHaveLength(8)
@@ -516,6 +534,17 @@ describe('buildDeck', () => {
             expect(idx).toBeGreaterThanOrEqual(s.noCurrentsBefore)
             expect(isCurrent[idx - 1]).toBe(false)
           })
+          // Exactly as many Currents as the interval leaves room for: one after
+          // question max(interval, noCurrentsBefore), then one per interval, never last.
+          const questionCount = e.questions.length
+          const interval = currentInterval(s, questionCount, e.currents.length)
+          const first = Math.max(interval, s.noCurrentsBefore)
+          const slots =
+            interval > 0 ? Math.max(0, Math.ceil((questionCount - first) / interval)) : 0
+          expect(isCurrent.filter(Boolean)).toHaveLength(Math.min(e.currents.length, slots))
+          const positions = isCurrent.flatMap((c, idx) => (c ? [idx] : []))
+          for (let k = 1; k < positions.length; k++)
+            expect(positions[k]! - positions[k - 1]!).toBe(interval + 1)
         },
       ),
       { seed: 20261008, numRuns: 300 },
@@ -585,7 +614,7 @@ describe('buildDeck with the bundled content', () => {
     for (const id of liveOnly) expect(live.cards).toContain(id)
   })
 
-  it('deals the default deck in level order with a Current every sixth card from the sixth', () => {
+  it('deals the default deck in level order with the Currents spread over the whole deck', () => {
     const deck = buildDeck(input({ pool, settings: realSettings }))
     const byId = new Map(pool.map((c) => [c.id, c]))
     const levels = deck.cards.map((id) => byId.get(id)!.level).filter((l) => l !== null)
@@ -594,6 +623,14 @@ describe('buildDeck with the bundled content', () => {
     const positions = deck.cards.flatMap((id, idx) =>
       byId.get(id)!.type === 'current' ? [idx] : [],
     )
-    expect(positions.slice(0, 3)).toEqual([5, 11, 17])
+    const e = eligibleCards(input({ pool, settings: realSettings }))
+    const interval = currentInterval(realSettings, e.questions.length, e.currents.length)
+    expect(interval).toBeGreaterThan(defaults.currentEvery)
+    expect(positions).toHaveLength(e.currents.length)
+    expect(positions.slice(0, 3)).toEqual([interval, 2 * interval + 1, 3 * interval + 2])
+    // The last Current lands in the final third of the deck, not in the first level.
+    const last = positions[positions.length - 1]!
+    expect(last).toBeGreaterThan((deck.cards.length * 2) / 3)
+    expect(byId.get(deck.cards[last - 1]!)!.level).toBe(3)
   })
 })

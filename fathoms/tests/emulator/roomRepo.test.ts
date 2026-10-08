@@ -283,7 +283,11 @@ describe('online rooms', () => {
       { type: 'pass', by: bob.uid, at: 6700, target: 'close' },
       lookup,
     )
-    await runRoomAction(bob.db, roomId, { type: 'lighter', by: bob.uid, at: 6750 }, lookup)
+    // The deck is The Deep only, so Go lighter has nothing to pull forward: the transaction
+    // surfaces the reducer's refusal and writes nothing.
+    await expect(
+      runRoomAction(bob.db, roomId, { type: 'lighter', by: bob.uid, at: 6750 }, lookup),
+    ).rejects.toMatchObject({ code: 'nothing-lighter' })
     await runRoomAction(
       bob.db,
       roomId,

@@ -15,6 +15,7 @@ const answerSchema = z.object({ text: z.string(), at: z.number() })
 const followUpSchema = z.object({
   text: z.string(),
   at: z.number(),
+  askedTurn: z.number().default(0),
   reply: answerSchema.nullable(),
 })
 
@@ -32,6 +33,7 @@ export const playerDocSchema = z.object({
   afterDarkEnabled: z.boolean().default(false),
   afterDarkConfirmedAt: z.number().nullable().default(null),
   lastTurnAt: z.number().nullable().default(null),
+  lastTurn: z.number().nullable().default(null),
   rulesAgreedAt: z.number().nullable().default(null),
 })
 
@@ -102,6 +104,7 @@ export const cardDocSchema = z.object({
   readBy: z.record(z.string(), z.number()),
   status: z.enum(['open', 'closed', 'passed', 'hidden']),
   closedAt: z.number().nullable(),
+  closedTurn: z.number().nullable().default(null),
   passedBy: z.string().nullable(),
 })
 
@@ -205,6 +208,7 @@ export function toCardDoc(card: CardRecord): CardDoc {
     readBy: { ...card.readBy },
     status: card.status,
     closedAt: card.closedAt,
+    closedTurn: card.closedTurn,
     passedBy: card.passedBy,
   }
 }
