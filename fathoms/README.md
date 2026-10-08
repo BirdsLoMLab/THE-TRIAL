@@ -4,7 +4,11 @@ Private two-player conversation game for two Android phones. React web app wrapp
 
 ## Status
 
-Phase 0 (scaffold) is built and verified: the web app builds, the Android project is generated and committed, and the placeholder Home screen shows the app name and card counts per pack and level. Two Phase 0 steps need your accounts and phones and are still open: create the Firebase project and drop its config files in (see Firebase below), and build the debug APK and install it on both phones (see Android debug build). Game logic and screens arrive in Phase 1.
+Phase 0 (scaffold) and Phase 1 (pure logic and Same Device mode) are built and verified.
+
+- `src/game` holds the deck builder and the turn reducer: pure functions, no React, Firebase, or Capacitor, 100 percent line coverage enforced by `pnpm test`, plus a property test for the strict alternation of the ball.
+- Same Device mode plays a whole deck on one phone: Home, setup, Rules, Turn (catch up, close, open, send, reveal, hand off), Current cards in the same flow, Journal, and the Phase 1 subset of Settings. The room lives in localStorage and survives a reload.
+- Two Phase 0 steps still need your accounts and phones: create the Firebase project (see Firebase below) and install the debug APK on both phones (see Android debug build). Online rooms, push, and reminders arrive in Phases 2 and 3.
 
 Dependency versions were checked against the npm registry on 2026-10-08. Re-check before upgrading.
 
@@ -88,6 +92,19 @@ That runs `pnpm android:sync`, then `gradlew assembleDebug` inside `android/` (i
 
 Phase 5 covers signed release builds and the keystore. Keystore files (`*.jks`, `*.keystore`) are ignored by git.
 
+Without Android Studio, the command line tools alone work too. Download `commandlinetools-linux-<build>_latest.zip` from the Android developer site, unzip it so that `sdkmanager` sits at `<SDK>/cmdline-tools/latest/bin/sdkmanager`, then:
+
+```bash
+export ANDROID_HOME=<SDK>
+export JAVA_HOME=<a JDK 21>
+yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+pnpm android:sync
+cd android && ./gradlew assembleDebug
+```
+
+Maven Central sometimes answers 429 (too many requests) when Gradle resolves everything at once on a shared network. Rerun with `./gradlew assembleDebug --max-workers=1` and it goes through.
+
 ## Playwright
 
 `pnpm test:e2e` starts the dev server and runs Chromium with a 360 by 780 CSS pixel viewport. The first time on a machine, run `pnpm exec playwright install chromium`. To reuse an existing Chromium instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its path.
@@ -99,11 +116,17 @@ fathoms/
   content/            shared.json and packs/*.json, validated by src/content/schema.ts
   src/config/         app name and id
   src/content/        schema, loader
-  src/game/           pure logic, no React, Firebase, or Capacitor (Phase 1, not created yet)
-  src/routes/         one file per screen
+  src/game/           pure logic: types.ts, deck.ts (deck builder), turns.ts (turn reducer and turn view)
+  src/store/          zustand store for Same Device mode (localStorage) and the clock helper
+  src/components/     shared UI: buttons, inputs, card blocks, level chips
+  src/routes/         one file per screen, routes.ts is the hash route table
   src/sync/           Firebase init (guarded until .env.local exists)
   scripts/            content check, dash check, Vite content plugin, Android debug build
-  tests/unit/         Vitest
-  tests/e2e/          Playwright
+  tests/unit/         Vitest: game logic, store, screens, content
+  tests/e2e/          Playwright: home smoke test and a full deck on one phone
   android/            Capacitor Android project (generated, committed)
 ```
+
+## Same Device mode
+
+Pass and play on one phone, no backend. Home, then Play on this phone: two names and two colors. Both players agree to the two rules, then the phone goes back and forth. The first turn only opens a card. Every later turn shows, in order: the reveal of the card you opened last time (with one follow-up question each), any follow-up questions waiting for you, the card to close (written blind unless Settings says otherwise), the next card to open, and one Send button. After Send the closer sees the reveal, then hands the phone over. Pass, Go lighter, and Pause live under More. When the deck runs out, a closer prompt shows and New deck deals again, skipping the cards already answered and asking for the rules again. Drafts are saved on the phone until you send.
