@@ -30,7 +30,9 @@ const DECK_FIELDS: readonly (keyof RoomSettings)[] = [
 ]
 
 interface DeckDraft {
-  packs: string[]
+  /** null until the player touches a pack: the room's packs show through, so a pack another
+   * section adds (After Dark switching on) is not lost to a stale draft. */
+  packs: string[] | null
   startLevel: LevelId
   progression: Progression
   currentEvery: number
@@ -50,15 +52,19 @@ function Toggle({
   onChange,
   testId,
   hint,
+  disabled = false,
 }: {
   readonly label: string
   readonly checked: boolean
   readonly onChange: (next: boolean) => void
   readonly testId: string
   readonly hint?: string | undefined
+  readonly disabled?: boolean
 }) {
   return (
-    <label className="flex min-h-12 items-center justify-between gap-4 py-2">
+    <label
+      className={`flex min-h-12 items-center justify-between gap-4 py-2 ${disabled ? 'opacity-60' : ''}`}
+    >
       <span>
         <span className="block text-base">{label}</span>
         {hint && <span className="text-ink-muted block text-xs">{hint}</span>}
@@ -67,6 +73,7 @@ function Toggle({
         type="checkbox"
         className="h-6 w-6 shrink-0"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         data-testid={testId}
       />
@@ -278,19 +285,22 @@ function RemindersSection() {
   )
 }
 
-/** PLAN 4.9: each player switches After Dark on for themselves after confirming they are an adult. */
+/**
+ * PLAN 4.9: each player switches After Dark on for themselves after confirming
+ * they are an adult. Online the screen belongs to one player; on one phone both
+ * players switch it from the same screen, so neither has to wait for the ball.
+ */
 function AfterDarkSection() {
   const game = useGame()
   const { room } = game
-  const actor = game.mode === 'online' ? game.viewer : room.ball.holderUid
-  const me = room.players[actor]
-  const partner = room.order.find((uid) => uid !== actor)
-  const [confirm, setConfirm] = useState(false)
+  const actors = game.mode === 'online' ? [game.viewer] : [...room.order]
+  const [confirm, setConfirm] = useState<Record<PlayerId, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   const content = getContent()
   const adultPack = content.packs.find((pack) => pack.adult)
   const packOn = adultPack ? room.settings.packs.includes(adultPack.id) : false
   const bothOn = room.order.every((uid) => room.players[uid]?.afterDarkEnabled)
+  const first = actors[0] as PlayerId
 
   async function run(action: Parameters<typeof game.dispatch>[0]) {
     setError(null)
@@ -301,19 +311,26 @@ function AfterDarkSection() {
     }
   }
 
-  async function toggle(enabled: boolean) {
-    await run({ type: 'afterDark', by: actor, at: clock.now(), enabled, confirmAdult: confirm })
+  async function toggle(uid: PlayerId, enabled: boolean) {
+    await run({
+      type: 'afterDark',
+      by: uid,
+      at: clock.now(),
+      enabled,
+      confirmAdult: confirm[uid] ?? false,
+    })
     if (enabled && adultPack && !packOn) {
       await run({
         type: 'updateSettings',
-        by: actor,
+        by: uid,
         at: clock.now(),
         patch: { packs: [...room.settings.packs, adultPack.id] },
       })
     }
   }
 
-  if (!adultPack || !me) return null
+  if (!adultPack) return null
+  const partnerOf = (uid: PlayerId) => room.order.find((other) => other !== uid)
   return (
     <section>
       <SectionLabel>After Dark</SectionLabel>
@@ -321,39 +338,68 @@ function AfterDarkSection() {
         <p className="text-ink-muted text-sm">
           {adultPack.blurb}{' '}
           {bothOn
-            ? 'On for both of you: its cards join the next deck.'
-            : partner
-              ? `${playerName(room, partner)} ${room.players[partner]?.afterDarkEnabled ? 'has it on' : 'has it off'}.`
-              : ''}
+            ? 'On for both of you: pick it under Packs, alone or with the others.'
+            : game.mode === 'online'
+              ? (() => {
+                  const partner = partnerOf(game.viewer)
+                  return partner
+                    ? `${playerName(room, partner)} ${room.players[partner]?.afterDarkEnabled ? 'has it on' : 'has it off'}.`
+                    : ''
+                })()
+              : 'Each of you switches it on here.'}
         </p>
-        {me.afterDarkEnabled ? (
-          <Button block onClick={() => toggle(false)} data-testid="settings-afterdark-off">
-            Turn After Dark off for me
-          </Button>
-        ) : (
-          <>
-            <label className="flex items-start gap-3 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1 h-5 w-5"
-                checked={confirm}
-                onChange={(e) => setConfirm(e.target.checked)}
-                data-testid="settings-afterdark-confirm"
-              />
-              <span>I am 18 or older and I want explicit cards in this room.</span>
-            </label>
-            <Button
-              variant="primary"
-              block
-              disabled={!confirm || game.busy}
-              onClick={() => toggle(true)}
-              data-testid="settings-afterdark-on"
+        {actors.map((uid) => {
+          const player = room.players[uid]
+          if (!player) return null
+          const own = game.mode === 'online'
+          return (
+            <div
+              key={uid}
+              className={
+                actors.length > 1
+                  ? 'border-edge flex flex-col gap-3 border-t pt-3'
+                  : 'flex flex-col gap-3'
+              }
+              data-testid={`settings-afterdark-${uid}`}
             >
-              Turn After Dark on for me
-            </Button>
-          </>
-        )}
-        <label className="flex min-h-12 items-center justify-between gap-4">
+              {player.afterDarkEnabled ? (
+                <Button
+                  block
+                  onClick={() => toggle(uid, false)}
+                  data-testid={`settings-afterdark-off-${uid}`}
+                >
+                  {own ? 'Turn After Dark off for me' : `Turn After Dark off for ${player.name}`}
+                </Button>
+              ) : (
+                <>
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-5 w-5"
+                      checked={confirm[uid] ?? false}
+                      onChange={(e) => setConfirm({ ...confirm, [uid]: e.target.checked })}
+                      data-testid={`settings-afterdark-confirm-${uid}`}
+                    />
+                    <span>
+                      {own ? 'I am' : `${player.name}: I am`} 18 or older and I want explicit cards
+                      in this room.
+                    </span>
+                  </label>
+                  <Button
+                    variant="primary"
+                    block
+                    disabled={!(confirm[uid] ?? false) || game.busy}
+                    onClick={() => toggle(uid, true)}
+                    data-testid={`settings-afterdark-on-${uid}`}
+                  >
+                    {own ? 'Turn After Dark on for me' : `Turn After Dark on for ${player.name}`}
+                  </Button>
+                </>
+              )}
+            </div>
+          )
+        })}
+        <label className="border-edge flex min-h-12 items-center justify-between gap-4 border-t pt-3">
           <span>
             <span className="block text-base">Keep After Dark entries in the journal</span>
             <span className="text-ink-muted block text-xs">
@@ -367,7 +413,7 @@ function AfterDarkSection() {
             onChange={(e) =>
               run({
                 type: 'updateSettings',
-                by: actor,
+                by: first,
                 at: clock.now(),
                 patch: { afterDarkRetention: e.target.checked ? 'keep' : 'hide-after-read' },
               })
@@ -615,7 +661,7 @@ export function Settings() {
   const content = getContent()
   const counts = countCards(content)
   const [draft, setDraft] = useState<DeckDraft>(() => ({
-    packs: [...room.settings.packs],
+    packs: null,
     startLevel: room.settings.startLevel,
     progression: room.settings.progression,
     currentEvery: room.settings.currentEvery,
@@ -630,12 +676,15 @@ export function Settings() {
   const [pauseNote, setPauseNote] = useState('')
   const [copied, setCopied] = useState(false)
 
+  const packs = draft.packs ?? room.settings.packs
+  const effective = { ...draft, packs }
   const deckChanged = DECK_FIELDS.some((field) => {
     const current = room.settings[field]
-    const next = draft[field as keyof DeckDraft]
+    const next = effective[field as keyof DeckDraft]
     return next !== undefined && JSON.stringify(current) !== JSON.stringify(next)
   })
   const actor = game.mode === 'online' ? game.viewer : room.ball.holderUid
+  const afterDarkBothOn = room.order.every((uid) => room.players[uid]?.afterDarkEnabled)
 
   async function save() {
     setError(null)
@@ -645,7 +694,7 @@ export function Settings() {
         type: 'updateSettings',
         by: actor,
         at: clock.now(),
-        patch: { ...draft },
+        patch: { ...effective },
       })
       if (deckChanged) {
         await game.rebuildDeck()
@@ -668,10 +717,10 @@ export function Settings() {
   }
 
   function togglePack(id: string, on: boolean) {
-    setDraft((d) => ({
-      ...d,
-      packs: on ? [...new Set([...d.packs, id])] : d.packs.filter((p) => p !== id),
-    }))
+    setDraft((d) => {
+      const current = d.packs ?? room.settings.packs
+      return { ...d, packs: on ? [...new Set([...current, id])] : current.filter((p) => p !== id) }
+    })
   }
 
   async function copyInvite() {
@@ -736,22 +785,26 @@ export function Settings() {
         <section>
           <SectionLabel>Packs</SectionLabel>
           <div className="bg-surface border-edge rounded-3xl border px-4 py-1">
-            {counts
-              .filter((pack) => !pack.adult)
-              .map((pack) => (
+            {counts.map((pack) => {
+              const gated = pack.adult && !afterDarkBothOn
+              return (
                 <Toggle
                   key={pack.packId}
                   label={pack.name}
-                  hint={`${pack.levels[1]} / ${pack.levels[2]} / ${pack.levels[3]} questions by level, ${pack.currents} Currents`}
-                  checked={draft.packs.includes(pack.packId)}
+                  hint={
+                    gated
+                      ? 'Both players switch it on under After Dark below. Any mix of packs works, After Dark alone included.'
+                      : `${pack.levels[1]} / ${pack.levels[2]} / ${pack.levels[3]} questions by level, ${pack.currents} Currents`
+                  }
+                  checked={packs.includes(pack.packId) && !gated}
+                  disabled={gated}
                   onChange={(on) => togglePack(pack.packId, on)}
                   testId={`settings-pack-${pack.packId}`}
                 />
-              ))}
+              )
+            })}
           </div>
-          <Notice>
-            After Dark needs both players to switch it on. That gate arrives in Phase 4.
-          </Notice>
+          {packs.length === 0 && <Notice tone="error">Pick at least one pack.</Notice>}
         </section>
 
         <section>

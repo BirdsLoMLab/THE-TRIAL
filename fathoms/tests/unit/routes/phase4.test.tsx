@@ -110,20 +110,59 @@ describe('Settings (Phase 4)', () => {
     agreeBoth()
   })
 
-  it('turns After Dark on for the holder only after the adult confirmation, and adds the pack', async () => {
+  it('turns After Dark on per player only after the adult confirmation, and adds the pack', async () => {
     const user = userEvent.setup()
     renderAt('/same-device/settings')
-    expect(screen.getByTestId('settings-afterdark-on')).toBeDisabled()
-    await user.click(screen.getByTestId('settings-afterdark-confirm'))
-    await user.click(screen.getByTestId('settings-afterdark-on'))
+    expect(screen.getByTestId('settings-afterdark-on-p1')).toBeDisabled()
+    expect(screen.getByTestId('settings-afterdark-on-p2')).toBeDisabled()
+    expect(screen.getByTestId('settings-pack-afterdark')).toBeDisabled()
+    await user.click(screen.getByTestId('settings-afterdark-confirm-p1'))
+    await user.click(screen.getByTestId('settings-afterdark-on-p1'))
     expect(store().room?.players.p1).toMatchObject({ afterDarkEnabled: true })
     expect(store().room?.players.p2?.afterDarkEnabled).toBe(false)
     expect(store().room?.settings.packs).toContain('afterdark')
-    expect(screen.getByTestId('settings-afterdark-off')).toBeInTheDocument()
+    // One player is not enough: the pack stays greyed out until the partner switches it on too.
+    expect(screen.getByTestId('settings-pack-afterdark')).toBeDisabled()
+    expect(screen.getByTestId('settings-afterdark-off-p1')).toBeInTheDocument()
     await user.click(screen.getByTestId('settings-afterdark-retention'))
     expect(store().room?.settings.afterDarkRetention).toBe('hide-after-read')
-    await user.click(screen.getByTestId('settings-afterdark-off'))
+    await user.click(screen.getByTestId('settings-afterdark-off-p1'))
     expect(store().room?.players.p1?.afterDarkEnabled).toBe(false)
+  })
+
+  it('lets both players switch After Dark on from one phone and deal After Dark alone', async () => {
+    const user = userEvent.setup()
+    const { router } = renderAt('/same-device/settings')
+    for (const uid of ['p1', 'p2']) {
+      await user.click(screen.getByTestId(`settings-afterdark-confirm-${uid}`))
+      await user.click(screen.getByTestId(`settings-afterdark-on-${uid}`))
+    }
+    expect(store().room?.players.p2?.afterDarkEnabled).toBe(true)
+    const afterDark = screen.getByTestId('settings-pack-afterdark')
+    expect(afterDark).toBeEnabled()
+    expect(afterDark).toBeChecked()
+    expect(screen.getByText(/16 \/ 16 \/ 18 questions by level, 8 Currents/)).toBeInTheDocument()
+    await user.click(screen.getByTestId('settings-pack-core'))
+    expect(screen.getByTestId('settings-pack-core')).not.toBeChecked()
+    await user.click(screen.getByTestId('settings-save'))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/same-device/rules'))
+    const deck = store().room!.deck.cards
+    // The Deep only, no Currents: the 18 level 3 After Dark questions and nothing else.
+    expect(deck).toHaveLength(18)
+    expect(deck.every((id) => id.startsWith('a3-'))).toBe(true)
+    expect(store().room?.settings.packs).toEqual(['afterdark'])
+  })
+
+  it('refuses to save with no pack picked', async () => {
+    const user = userEvent.setup()
+    renderAt('/same-device/settings')
+    await user.click(screen.getByTestId('settings-pack-core'))
+    expect(screen.getByText('Pick at least one pack.')).toBeInTheDocument()
+    await user.click(screen.getByTestId('settings-save'))
+    expect(
+      screen.getAllByRole('alert').some((el) => el.textContent?.includes('at least one pack')),
+    ).toBe(true)
+    expect(store().room?.settings.packs).toEqual(['core'])
   })
 
   it('excludes a topic for the room and prunes the deck', async () => {
