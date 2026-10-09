@@ -7,6 +7,7 @@ import { connectFirestoreEmulator, getDoc, getFirestore, type Firestore } from '
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { defaultContentDir, readContentDir } from '../../scripts/content-node'
 import { validateContent } from '../../src/content/schema'
+import { buildDeck } from '../../src/game/deck'
 import { roomPhase, turnView } from '../../src/game/turns'
 import type { CardLookup, PoolCard, RoomSettings } from '../../src/game/types'
 import {
@@ -210,14 +211,16 @@ describe('online rooms', () => {
       },
       lookup,
     )
+    // Ben's own open answer on card 2 arrives through the private listener, separately from the cards.
     const bobReveal = await b.until(
       (s) =>
         s.kind === 'ready' &&
         s.state.cards[0]?.answers[alice.uid] &&
-        s.state.cards[0]?.answers[bob.uid]
+        s.state.cards[0]?.answers[bob.uid] &&
+        s.state.cards[1]?.answers[bob.uid]
           ? s.state
           : null,
-      'both answers on card 1 for Ben',
+      'both answers on card 1 and the private answer on card 2 for Ben',
     )
     expect(bobReveal.cards[0]?.status).toBe('closed')
     expect(bobReveal.cards[0]?.answers[alice.uid]?.text).toBe('Ada opens 1')
@@ -304,6 +307,46 @@ describe('online rooms', () => {
     expect(afterFour.cards[3]?.status).toBe('open')
     expect(turnView(afterFour, lookup).catchUp?.card.seq).toBe(3)
 
+    // Reactions, favorites, and read stamps load their own card inside the transaction.
+    await runRoomAction(
+      alice.db,
+      roomId,
+      { type: 'react', by: alice.uid, at: 6900, seq: 1, emoji: '❤️' },
+      lookup,
+    )
+    await runRoomAction(
+      bob.db,
+      roomId,
+      { type: 'favorite', by: bob.uid, at: 6910, seq: 1, on: true },
+      lookup,
+    )
+    await runRoomAction(
+      alice.db,
+      roomId,
+      { type: 'markRead', by: alice.uid, at: 6920, seq: 1 },
+      lookup,
+    )
+    const annotated = await b.until(
+      (s) =>
+        s.kind === 'ready' &&
+        s.state.cards[0]?.favorite &&
+        alice.uid in (s.state.cards[0]?.readBy ?? {})
+          ? s.state
+          : null,
+      'reaction, favorite, and read stamp on card 1',
+    )
+    expect(annotated.cards[0]?.reactions).toEqual({ '❤️': [alice.uid] })
+    expect(annotated.cards[0]?.favorite).toBe(true)
+    expect(annotated.cards[0]?.readBy).toEqual({ [alice.uid]: 6920 })
+    await expect(
+      runRoomAction(
+        alice.db,
+        roomId,
+        { type: 'react', by: alice.uid, at: 6930, seq: 4, emoji: '❤️' },
+        lookup,
+      ),
+    ).rejects.toMatchObject({ code: 'card-not-closed' })
+
     await touchPresence(alice.db, roomId, alice.uid, 7000)
     const seen = await b.until(
       (s) => (s.kind === 'ready' && s.state.players[alice.uid]?.lastSeen === 7000 ? s.state : null),
@@ -322,6 +365,77 @@ describe('online rooms', () => {
     expect(restored.cards[2]?.answers[alice.uid]?.text).toBe('Ada opens 3')
     expect(restored.cards[0]?.answers[alice.uid]?.text).toBe('Ada opens 1')
     again.stop()
+  })
+
+  it('accepts Go lighter through the transaction and deals the lighter card next', async () => {
+    // A mixed deck whose first card is above level 1, so a lighter card can come forward.
+    const mixed: RoomSettings = { ...settings, startLevel: 1, progression: 'mixed' }
+    const players = [
+      { afterDarkEnabled: false, excludeTags: [] },
+      { afterDarkEnabled: false, excludeTags: [] },
+    ]
+    const history = {
+      answeredCardIds: new Set<string>(),
+      excludedCardIds: new Set<string>(),
+      passedCards: {},
+    }
+    let seed = ''
+    for (let i = 0; i < 50 && !seed; i++) {
+      const candidate = `lighter-${i}`
+      const deck = buildDeck({
+        settings: mixed,
+        players,
+        pool,
+        history,
+        seed: candidate,
+        now: 1000,
+      })
+      const first = byId.get(deck.cards[0] ?? '')
+      if (first?.type === 'question' && first.level > 1) seed = candidate
+    }
+    expect(seed).not.toBe('')
+    const roomId = await createOnlineRoom(alice.db, {
+      uid: alice.uid,
+      name: 'Ada',
+      color: '#4fb3d9',
+      settings: mixed,
+      rules: content.shared.rules,
+      pool,
+      seed,
+      now: 1000,
+    })
+    await joinOnlineRoom(bob.db, roomId, { uid: bob.uid, name: 'Ben', color: '#e0a030', now: 2000 })
+    const a = watch(alice, roomId)
+    const ready = await a.until((s) => (s.kind === 'ready' ? s.state : null), 'ready room')
+    await runRoomAction(alice.db, roomId, { type: 'agreeRules', by: alice.uid, at: 3000 }, lookup)
+    await runRoomAction(bob.db, roomId, { type: 'agreeRules', by: bob.uid, at: 3001 }, lookup)
+    const plain = turnView({ ...ready, lighter: null }, lookup).open?.card
+    expect(plain?.type === 'question' && plain.level > 1).toBe(true)
+    await runRoomAction(alice.db, roomId, { type: 'lighter', by: alice.uid, at: 3100 }, lookup)
+    const lighter = await a.until(
+      (s) => (s.kind === 'ready' && s.state.lighter ? s.state : null),
+      'lighter window',
+    )
+    expect(lighter.lighter).toEqual({ until: settings.lighterWindowCards })
+    const preview = turnView(lighter, lookup).open?.card
+    // The nearest lower level with an undealt card comes forward, not always level 1.
+    expect(preview?.type === 'question' && plain?.type === 'question').toBe(true)
+    if (preview?.type !== 'question' || plain?.type !== 'question') throw new Error('unreachable')
+    expect(preview.level).toBeLessThan(plain.level)
+    await runRoomAction(
+      alice.db,
+      roomId,
+      { type: 'send', by: alice.uid, at: 3200, openAnswer: 'Ada opens lighter' },
+      lookup,
+    )
+    const dealt = await a.until(
+      (s) => (s.kind === 'ready' && s.state.cards.length === 1 ? s.state : null),
+      'first card',
+    )
+    expect(dealt.cards[0]?.cardId).toBe(preview.id)
+    expect(dealt.cards[0]?.level).toBe(preview.level)
+    expect(dealt.deck.cards[0]).toBe(preview.id)
+    a.stop()
   })
 
   it('reports a missing room and refuses actions on it', async () => {

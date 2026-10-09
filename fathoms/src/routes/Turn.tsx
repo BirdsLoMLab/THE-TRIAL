@@ -208,9 +208,10 @@ function FollowUpBox({
 function RevealView({ game, seq }: { readonly game: GameAdapter; readonly seq: number }) {
   const { room } = game
   const card = cardBySeq(room, seq)
-  // The sender is the player who no longer holds the ball.
-  const sender = otherPlayer(room, room.ball.holderUid)
-  useMarkRead(card)
+  // The sender closed this card. Not "whoever lost the ball": closing the last
+  // card of a deck keeps the ball with the closer.
+  const sender = card ? card.closerUid : room.ball.holderUid
+  useMarkRead(card, sender)
   if (!card) return null
   const answers = visibleAnswers(room, card, sender)
   const waitingForOpener = card.status === 'closed' && !answers[card.openerUid]
@@ -227,8 +228,8 @@ function RevealView({ game, seq }: { readonly game: GameAdapter; readonly seq: n
           <FollowUpBox game={game} card={card} asker={sender} />
         </div>
       </CardBlock>
-      <p className="text-ink-muted mt-4 text-sm">
-        {playerName(room, room.ball.holderUid)} sees this at the start of their turn.
+      <p className="text-ink-muted mt-4 text-sm" data-testid="reveal-footer">
+        {playerName(room, card.openerUid)} sees this at the start of their turn.
       </p>
       <div className="mt-8">
         <Button variant="primary" block onClick={game.finishReveal} data-testid="reveal-done">
@@ -381,7 +382,7 @@ function OverflowMenu({ game, view }: { readonly game: GameAdapter; readonly vie
             data-testid="menu-lighter"
           >
             {!view.canGoLighter
-              ? 'Nothing lighter left in this deck'
+              ? 'No lighter card left to pull forward'
               : lighterActive
                 ? 'Going lighter: extend'
                 : `Go lighter for ${room.settings.lighterWindowCards} cards`}

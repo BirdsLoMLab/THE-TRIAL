@@ -114,7 +114,9 @@ export function eligibleCards(input: BuildDeckInput): EligibleCards {
  * The questions between Currents: at least `currentEvery`, and more when the
  * deck has more questions than the Currents could cover at that spacing, so
  * the Currents spread over the whole deck instead of bunching at the start.
- * Rounds down, so every eligible Current still finds a slot.
+ * Rounds down, so when the spread decides the gap every eligible Current still
+ * finds a slot; when `currentEvery` or `noCurrentsBefore` decides it, the
+ * Currents that do not fit are left out, as before.
  */
 export function currentInterval(
   settings: Pick<DeckSettings, 'currentEvery'>,

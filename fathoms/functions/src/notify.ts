@@ -5,6 +5,7 @@ export const TEXT = {
   turnTitle: 'Your turn',
   turnBody: '{partner} answered: {card}',
   turnBodyAdult: '{partner} answered an After Dark card',
+  revealTitle: 'Last card answered',
   reminderTitle: 'Still your turn',
   reminderBody: '{partner} has been waiting {hours} hours',
   nudgeBody: '{partner} nudged you',
@@ -44,6 +45,23 @@ export function turnPayload(
       : fill(TEXT.turnBody, { partner, card: preview(card.text) })
     : `${partner} sent a turn`
   return { title: TEXT.turnTitle, body, data: { roomId, kind: 'turn' } }
+}
+
+/**
+ * The last card of a deck was closed and the ball stayed with the closer, so
+ * no turn alert goes out: the opener is told their card was answered instead.
+ */
+export function revealPayload(
+  roomId: string,
+  partner: string,
+  card: { text: string; adult: boolean } | null,
+): Payload {
+  const body = card
+    ? card.adult
+      ? fill(TEXT.turnBodyAdult, { partner })
+      : fill(TEXT.turnBody, { partner, card: preview(card.text) })
+    : `${partner} answered your card`
+  return { title: TEXT.revealTitle, body, data: { roomId, kind: 'reveal' } }
 }
 
 export function reminderPayload(roomId: string, partner: string, hours: number): Payload {

@@ -110,6 +110,24 @@ describe('handleRoomUpdate', () => {
     })
   })
 
+  it('tells the opener when the closer keeps the ball after closing the last card', async () => {
+    const before = roomDoc('bob', 5, { openSeq: 1, turn: 1 })
+    const after = roomDoc('bob', 9, { openSeq: 0, turn: 2 })
+    expect(await handleRoomUpdate(ROOM, before, after)).toEqual(['reveal'])
+    const sent = await outbox()
+    const reveal = sent[sent.length - 1]!
+    expect(reveal['tokens']).toEqual(['token-a1', 'token-a2'])
+    expect(reveal['title']).toBe('Last card answered')
+    expect(reveal['body']).toBe(
+      'Ben answered: What is a small thing that reliably makes your day better...',
+    )
+    expect(reveal['data']).toEqual({ roomId: ROOM, kind: 'reveal' })
+    // A pass that closes the card without a send is not a reveal.
+    expect(
+      await handleRoomUpdate(ROOM, before, roomDoc('bob', 9, { openSeq: 0, turn: 1 })),
+    ).toEqual([])
+  })
+
   it('does nothing when the ball did not move and there is no nudge', async () => {
     expect(
       await handleRoomUpdate(ROOM, roomDoc('bob', 2), roomDoc('bob', 2, { openSeq: 2 })),

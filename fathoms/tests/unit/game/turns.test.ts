@@ -898,9 +898,9 @@ describe('go lighter', () => {
     expect(state.deck.cards).toEqual(['q1', 'q6', 'w1', 'q7'])
   })
 
-  it('refuses Go lighter when it would not change the next card', () => {
-    // Level 1 up next; a Current up next; a linear deck past its lowest level; an empty deck.
-    for (const cards of [['q1', 'q2'], ['w1', 'q6', 'q1'], ['q4', 'q5', 'q6'], []]) {
+  it('refuses Go lighter when no card inside the window would change', () => {
+    // Only level 1 left; a window with nothing lower behind it; a linear deck past level 1; empty.
+    for (const cards of [['q1', 'q2'], ['w1', 'q1', 'q6'], ['q4', 'q5', 'q6'], []]) {
       const state = ready(cards)
       expect(turnView(state, lookup).canGoLighter).toBe(false)
       expectGameError(
@@ -908,6 +908,21 @@ describe('go lighter', () => {
         'nothing-lighter',
       )
     }
+    // A Current up next does not block: the question after it has a lighter card behind it.
+    expect(turnView(ready(['w1', 'q6', 'q1']), lookup).canGoLighter).toBe(true)
+    // The window decides: with one card it covers only q1, with two it reaches q4.
+    const one = ready(['q1', 'q4', 'q2'], { settings: defaultSettings({ lighterWindowCards: 1 }) })
+    expect(turnView(one, lookup).canGoLighter).toBe(false)
+    const two = ready(['q1', 'q4', 'q2'], { settings: defaultSettings({ lighterWindowCards: 2 }) })
+    expect(turnView(two, lookup).canGoLighter).toBe(true)
+    // The lighter card may sit beyond the window; it is pulled forward into it.
+    const far = ready(['q4', 'q6', 'q7', 'q8', 'q1'], {
+      settings: defaultSettings({ lighterWindowCards: 1 }),
+    })
+    expect(turnView(far, lookup).canGoLighter).toBe(true)
+    expect(nextDeal(reduce(far, { type: 'lighter', by: A, at: 5 }, lookup), lookup)?.card.id).toBe(
+      'q1',
+    )
     // Once the only lower card is used up, extending the window is refused too.
     let state = ready(['q4', 'q1', 'q5'], { settings: defaultSettings({ lighterWindowCards: 1 }) })
     state = reduce(state, { type: 'lighter', by: A, at: 5 }, lookup)
@@ -940,6 +955,19 @@ describe('go lighter', () => {
     expect(state.lighter).toEqual({ until: 2 })
     const paused = reduce(state, { type: 'pause', by: A, at: 16 }, lookup)
     expectGameError(() => reduce(paused, { type: 'lighter', by: B, at: 17 }, lookup), 'paused')
+  })
+
+  it('skips deck ids the pool no longer knows while looking for a lighter card', () => {
+    // A custom card deleted after the deal must not break the lighter scan; only the next card must exist.
+    let state = ready(['q4', 'ghost', 'q1'], {
+      settings: defaultSettings({ lighterWindowCards: 2 }),
+    })
+    expect(turnView(state, lookup).canGoLighter).toBe(true)
+    state = reduce(state, { type: 'lighter', by: A, at: 5 }, lookup)
+    expect(nextDeal(state, lookup)).toEqual({ index: 2, seq: 1, card: BY_ID.get('q1') })
+    state = send(state, A, 10, { open: 'a1' })
+    expect(state.deck.cards).toEqual(['q1', 'ghost', 'q4'])
+    expectGameError(() => turnView(state, lookup), 'unknown-card')
   })
 
   it('applies to an opener pass too, so the preview and the dealt card agree', () => {

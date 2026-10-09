@@ -227,7 +227,7 @@ export interface TurnView {
   readonly deckExhausted: boolean
   readonly passesLeft: number
   readonly lighter: Lighter | null
-  /** Go lighter would change the next card. False on a deck with nothing lighter left. */
+  /** Go lighter would change a card inside its window. False once nothing lighter is left to pull forward. */
   readonly canGoLighter: boolean
   readonly canSend: boolean
 }
@@ -403,7 +403,9 @@ export function visibleAnswers(
 /**
  * The card that would be dealt next, with Go lighter applied: inside the
  * lighter window a question is replaced by the first undealt question of the
- * nearest lower level that still has one. Pure, so the preview and the deal agree.
+ * nearest lower level that still has one. Pure, so the preview and the deal
+ * agree. Only the card about to be dealt has to exist in the pool; ids the
+ * pool no longer knows (a deleted custom card further down) are skipped here.
  */
 export function nextDeal(state: RoomState, lookup: CardLookup): NextDeal | null {
   const { deck, lighter } = state
@@ -413,8 +415,8 @@ export function nextDeal(state: RoomState, lookup: CardLookup): NextDeal | null 
   if (lighter && seq <= lighter.until && card.type === 'question') {
     for (let wanted = card.level - 1; wanted >= 1; wanted--) {
       for (let i = deck.dealt; i < deck.cards.length; i++) {
-        const candidate = requirePoolCard(lookup, deck.cards[i])
-        if (candidate.type === 'question' && candidate.level === wanted)
+        const candidate = lookup(deck.cards[i] as string)
+        if (candidate?.type === 'question' && candidate.level === wanted)
           return { index: i, seq, card: candidate }
       }
     }
@@ -423,16 +425,25 @@ export function nextDeal(state: RoomState, lookup: CardLookup): NextDeal | null 
 }
 
 /**
- * Whether Go lighter has anything to do: a lighter window starting now would
- * deal a different next card. On a linear deck past the lowest level, or with
- * a Current up next, there is nothing lighter to pull forward.
+ * Whether Go lighter has anything to do: a window of lighterWindowCards deals
+ * starting now would change at least one of them, which is the case exactly
+ * when a question inside the window has a lower level question somewhere
+ * behind it in the deck. On a linear deck past the lowest level there is
+ * nothing lighter left to pull forward.
  */
 export function lighterAvailable(state: RoomState, lookup: CardLookup): boolean {
-  const plain = nextDeal({ ...state, lighter: null }, lookup)
-  if (!plain) return false
-  const until = state.cards.length + state.settings.lighterWindowCards
-  const lighter = nextDeal({ ...state, lighter: { until } }, lookup) as NextDeal
-  return lighter.card.id !== plain.card.id
+  const { deck } = state
+  const undealt = deck.cards.slice(deck.dealt).map((id) => lookup(id))
+  const window = Math.min(undealt.length, state.settings.lighterWindowCards)
+  for (let j = 0; j < window; j++) {
+    const card = undealt[j]
+    if (card?.type !== 'question') continue
+    for (let k = j + 1; k < undealt.length; k++) {
+      const later = undealt[k]
+      if (later?.type === 'question' && later.level < card.level) return true
+    }
+  }
+  return false
 }
 
 /** The Turn screen for the ball holder. */
@@ -746,7 +757,7 @@ function goLighter(
 ): RoomState {
   requireTurn(state, action.by)
   if (!lighterAvailable(state, lookup))
-    fail('nothing-lighter', 'nothing lighter is left in this deck')
+    fail('nothing-lighter', 'no lighter card is left to pull forward')
   return { ...state, lighter: { until: state.cards.length + state.settings.lighterWindowCards } }
 }
 

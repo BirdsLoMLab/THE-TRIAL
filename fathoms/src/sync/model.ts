@@ -15,7 +15,8 @@ const answerSchema = z.object({ text: z.string(), at: z.number() })
 const followUpSchema = z.object({
   text: z.string(),
   at: z.number(),
-  askedTurn: z.number().default(0),
+  /** Missing on documents written before turn counters: never pending again, still in the journal. */
+  askedTurn: z.number().default(-1),
   reply: answerSchema.nullable(),
 })
 

@@ -299,6 +299,7 @@ describe('After Dark switch', () => {
     const open = cardBySeq(state, 1)
     expect(open?.status).toBe('passed')
     expect(open?.passedBy).toBe(B)
+    expect(open?.closedTurn).toBe(1)
     expect(open?.answers[A]?.text).toBe('a1')
     expect(state.openSeq).toBe(0)
     expect(state.passes).toEqual({ [A]: 3, [B]: 3 })
@@ -306,6 +307,12 @@ describe('After Dark switch', () => {
     expect(state.deck.dealt).toBe(1)
     expect(turnView(state, lookup).open?.card.id).toBe('q1')
     expect(state.passedCards['ad1']).toBe(11)
+    // The opener learns of the pass at the start of their next turn, with no follow-up offered.
+    state = send(state, B, 12, undefined, 'b2')
+    const view = turnView(state, lookup)
+    expect(view.holder).toBe(A)
+    expect(view.catchUp?.card.seq).toBe(1)
+    expect(view.catchUp?.canAskFollowUp).toBe(false)
   })
 
   it('leaves the deck alone when the other player still has it off', () => {

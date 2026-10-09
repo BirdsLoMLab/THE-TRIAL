@@ -11,6 +11,7 @@ import {
   deadTokens,
   nudgePayload,
   reminderPayload,
+  revealPayload,
   turnPayload,
   type Payload,
   type Sender,
@@ -35,6 +36,7 @@ interface PlayerDoc {
 interface RoomDoc extends ReminderRoom {
   players: Record<string, PlayerDoc>
   openSeq: number
+  turn?: number
   nudge?: { by: string; at: number } | null
 }
 
@@ -100,27 +102,39 @@ function partnerName(room: RoomDoc, uid: string): string {
   return partner ? (room.players[partner]?.name ?? 'Your partner') : 'Your partner'
 }
 
-async function openCard(
+async function cardAt(
   roomId: string,
-  room: RoomDoc,
+  seq: number,
 ): Promise<{ text: string; adult: boolean } | null> {
-  if (!room.openSeq) return null
+  if (!seq) return null
   const snap = await db
     .collection('rooms')
     .doc(roomId)
     .collection('cards')
-    .doc(String(room.openSeq).padStart(4, '0'))
+    .doc(String(seq).padStart(4, '0'))
     .get()
   const data = snap.data()
   if (!data) return null
   return { text: String(data['cardText'] ?? ''), adult: Boolean(data['adult']) }
 }
 
+/** A send that closed a card and dealt none: the ball stayed, the deck is finished. */
+function closedLastCard(before: RoomDoc, after: RoomDoc): boolean {
+  return (
+    after.ball.holderUid === before.ball.holderUid &&
+    (after.turn ?? 0) > (before.turn ?? 0) &&
+    before.openSeq > 0 &&
+    after.openSeq === 0
+  )
+}
+
 /**
- * A room document changed. A ball pass sends "Your turn" to the new holder; a
- * fresh nudge from the waiting player pokes the holder, at most once per
- * NUDGE_INTERVAL_MS. Exported so tests can call it against the Firestore
- * emulator without the Functions emulator.
+ * A room document changed. A ball pass sends "Your turn" to the new holder.
+ * Closing the last card of a deck keeps the ball, so that send tells the
+ * opener their card was answered instead. A fresh nudge from the waiting
+ * player pokes the holder, at most once per NUDGE_INTERVAL_MS. Exported so
+ * tests can call it against the Firestore emulator without the Functions
+ * emulator.
  */
 export async function handleRoomUpdate(
   roomId: string,
@@ -130,9 +144,21 @@ export async function handleRoomUpdate(
   const sent: string[] = []
   if (after.ball.holderUid !== before.ball.holderUid) {
     const holder = after.ball.holderUid
-    const card = await openCard(roomId, after)
+    const card = await cardAt(roomId, after.openSeq)
     await sendToPlayer(roomId, after, holder, turnPayload(roomId, partnerName(after, holder), card))
     sent.push('turn')
+  } else if (closedLastCard(before, after)) {
+    const opener = Object.keys(after.players).find((uid) => uid !== after.ball.holderUid)
+    if (opener) {
+      const card = await cardAt(roomId, before.openSeq)
+      await sendToPlayer(
+        roomId,
+        after,
+        opener,
+        revealPayload(roomId, partnerName(after, opener), card),
+      )
+      sent.push('reveal')
+    }
   }
 
   const nudge = after.nudge

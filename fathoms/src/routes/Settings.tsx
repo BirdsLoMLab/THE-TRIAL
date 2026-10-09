@@ -804,9 +804,9 @@ export function Settings() {
             </fieldset>
             <label className="flex min-h-12 items-center justify-between gap-4">
               <span>
-                <span className="block text-base">A Current after every</span>
+                <span className="block text-base">A Current at least every</span>
                 <span className="text-ink-muted block text-xs">
-                  questions. 0 turns Currents off.
+                  questions, spread over the whole deck. 0 turns Currents off.
                 </span>
               </span>
               <input

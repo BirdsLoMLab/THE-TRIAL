@@ -193,6 +193,9 @@ function seqsFor(action: Action): number[] {
       return (action.replies ?? []).map((reply) => reply.seq)
     case 'askFollowUp':
     case 'replyFollowUp':
+    case 'react':
+    case 'favorite':
+    case 'markRead':
       return [action.seq]
     default:
       return []

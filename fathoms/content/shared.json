@@ -38,6 +38,7 @@
     "turnTitle": "Your turn",
     "turnBody": "{partner} answered: {card}",
     "turnBodyAdult": "{partner} answered an After Dark card",
+    "revealTitle": "Last card answered",
     "reminderTitle": "Still your turn",
     "reminderBody": "{partner} has been waiting {hours} hours",
     "nudgeBody": "{partner} nudged you"

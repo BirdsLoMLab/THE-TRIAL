@@ -152,6 +152,7 @@ export const notificationsSchema = z.strictObject({
   turnTitle: nonEmpty,
   turnBody: nonEmpty,
   turnBodyAdult: nonEmpty,
+  revealTitle: nonEmpty,
   reminderTitle: nonEmpty,
   reminderBody: nonEmpty,
   nudgeBody: nonEmpty,

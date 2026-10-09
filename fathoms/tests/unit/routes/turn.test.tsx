@@ -134,7 +134,7 @@ describe('Turn screen', () => {
     await user.click(screen.getByTestId('turn-menu'))
     const lighter = screen.getByTestId('menu-lighter')
     expect(lighter).toBeDisabled()
-    expect(lighter).toHaveTextContent('Nothing lighter left in this deck')
+    expect(lighter).toHaveTextContent('No lighter card left to pull forward')
   })
 
   it('reports a rule the reducer refuses instead of crashing', async () => {
@@ -182,6 +182,39 @@ describe('Turn screen', () => {
     expect(view().holder).toBe('p2')
     expect(view().catchUp?.card.seq).toBe(2)
     expect(view().close?.card.seq).toBe(3)
+  })
+
+  it('reveals the last card to its closer, who keeps the ball, and files the follow-up under the closer', async () => {
+    const user = userEvent.setup()
+    shrinkDeck(2)
+    store().sendTurn({ open: 'a1' }, 10)
+    store().acknowledgeHandoff()
+    store().sendTurn({ close: 'b1', open: 'b2' }, 20)
+    store().finishReveal()
+    store().acknowledgeHandoff()
+    renderAt('/same-device/turn')
+    await user.type(screen.getByTestId('close-answer'), 'a2')
+    await user.click(screen.getByTestId('send'))
+    const reveal = screen.getByTestId('screen-reveal')
+    expect(within(reveal).getByTestId('answer-p2')).toHaveTextContent('b2')
+    expect(within(reveal).getByTestId('answer-p1')).toHaveTextContent('a2')
+    expect(reveal).toHaveTextContent("Ask one follow-up about Ben's answer")
+    expect(screen.getByTestId('reveal-footer')).toHaveTextContent('Ben sees this')
+    await user.type(screen.getByTestId('follow-up-2'), 'Why that?')
+    await user.click(screen.getByTestId('follow-up-ask-2'))
+    expect(store().room?.cards[1]?.followUps).toEqual({
+      p1: { text: 'Why that?', at: expect.any(Number), askedTurn: 3, reply: null },
+    })
+    await user.click(screen.getByTestId('reveal-done'))
+    expect(screen.getByTestId('screen-exhausted')).toBeInTheDocument()
+    // Ben gets the question on his next turn, after Ada deals and opens the new deck.
+    store().rebuildDeck('p1', 30, 'next')
+    agreeBoth()
+    store().sendTurn({ open: 'a3' }, 40)
+    store().acknowledgeHandoff()
+    expect(view().holder).toBe('p2')
+    expect(view().pendingFollowUps.map((p) => [p.card.seq, p.askedBy])).toEqual([[2, 'p1']])
+    expect(view().catchUp?.canAskFollowUp).toBe(true)
   })
 
   it('disables New deck when a rebuild would deal nothing', () => {

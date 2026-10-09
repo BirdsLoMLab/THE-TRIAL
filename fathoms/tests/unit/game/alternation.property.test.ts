@@ -271,6 +271,33 @@ function expectOtherCardsUnchanged(prev: RoomState, next: RoomState, seqs: numbe
   })
 }
 
+/** The fields every freshly dealt card shares, copied from the pool card the view announced. */
+function dealtRecord(
+  view: TurnView,
+  seq: number,
+  opener: PlayerId,
+  closer: PlayerId,
+  at: number,
+): Omit<CardRecord, 'answers' | 'status' | 'closedAt' | 'closedTurn' | 'passedBy'> {
+  const pool = view.open!.card
+  return {
+    seq,
+    cardId: pool.id,
+    cardText: pool.text,
+    pack: pool.pack,
+    adult: pool.adult,
+    level: pool.level,
+    type: pool.type,
+    dealtAt: at,
+    openerUid: opener,
+    closerUid: closer,
+    followUps: {},
+    reactions: {},
+    favorite: false,
+    readBy: {},
+  }
+}
+
 interface Model {
   /** Who must hold the ball after the action. Flips only on a send that deals a card. */
   holder: PlayerId
@@ -318,18 +345,14 @@ function checkEffect(
       expect(next.deck.dealt).toBe(prev.deck.dealt + (dealt ? 1 : 0))
       if (dealt) {
         const card = next.cards[next.cards.length - 1]!
-        expect(card).toMatchObject({
-          seq: prev.cards.length + 1,
-          cardId: view.open!.card.id,
-          openerUid: holder,
-          closerUid: partner,
+        expect(card).toEqual({
+          ...dealtRecord(view, prev.cards.length + 1, holder, partner, action.at),
+          answers: { [holder]: { text: action.openAnswer, at: action.at } },
           status: 'open',
-          dealtAt: action.at,
           closedAt: null,
           closedTurn: null,
           passedBy: null,
         })
-        expect(card.answers).toEqual({ [holder]: { text: action.openAnswer, at: action.at } })
         expect(next.openSeq).toBe(card.seq)
         model.holder = partner
       } else {
@@ -346,8 +369,17 @@ function checkEffect(
         })
       }
       for (const reply of action.replies ?? []) {
-        const followUp = next.cards[reply.seq - 1]!.followUps[partner]!
-        expect(followUp.reply).toEqual({ text: reply.text, at: action.at })
+        const before = prev.cards[reply.seq - 1]!
+        expect(next.cards[reply.seq - 1]).toEqual({
+          ...before,
+          followUps: {
+            ...before.followUps,
+            [partner]: {
+              ...before.followUps[partner]!,
+              reply: { text: reply.text, at: action.at },
+            },
+          },
+        })
       }
       const touched = [
         ...(view.close ? [view.close.card.seq] : []),
@@ -390,18 +422,18 @@ function checkEffect(
         expectUnchangedExcept(prev, next, ['deck', 'lighter', 'passes', 'passedCards', 'cards'])
         expect(next.cards.length).toBe(prev.cards.length + 1)
         const card = next.cards[next.cards.length - 1]!
-        expect(card).toMatchObject({
-          seq: prev.cards.length + 1,
-          cardId: view.open!.card.id,
-          openerUid: holder,
-          closerUid: partner,
-          status: 'passed',
+        expect(card).toEqual({
+          ...dealtRecord(view, prev.cards.length + 1, holder, partner, action.at),
           answers: {},
+          status: 'passed',
           closedAt: action.at,
           closedTurn: prev.turn,
           passedBy: holder,
         })
         expectOtherCardsUnchanged(prev, next, [])
+        expect(next.lighter).toEqual(
+          prev.lighter && next.cards.length >= prev.lighter.until ? null : prev.lighter,
+        )
         expect(next.deck.dealt).toBe(prev.deck.dealt + 1)
         expect(next.passes[holder]).toBe((prev.passes[holder] ?? 0) - (card.adult ? 0 : 1))
         expect(next.passedCards).toEqual({ ...prev.passedCards, [card.cardId]: action.at })

@@ -7,6 +7,7 @@ import {
   nudgePayload,
   preview,
   reminderPayload,
+  revealPayload,
   TEXT,
   turnPayload,
 } from '../src/notify.js'
@@ -41,6 +42,18 @@ describe('notification text', () => {
     expect(adult.body).toBe('Ada answered an After Dark card')
     expect(adult.body).not.toContain('Explicit')
     expect(turnPayload('r1', 'Ada', null).body).toBe('Ada sent a turn')
+  })
+
+  it('tells the opener the last card was answered, naming the card unless it is After Dark', () => {
+    expect(revealPayload('r1', 'Ben', { text: 'What is your order?', adult: false })).toEqual({
+      title: 'Last card answered',
+      body: 'Ben answered: What is your order?',
+      data: { roomId: 'r1', kind: 'reveal' },
+    })
+    expect(revealPayload('r1', 'Ben', { text: 'Explicit text', adult: true }).body).toBe(
+      'Ben answered an After Dark card',
+    )
+    expect(revealPayload('r1', 'Ben', null).body).toBe('Ben answered your card')
   })
 
   it('builds reminder and nudge bodies', () => {
